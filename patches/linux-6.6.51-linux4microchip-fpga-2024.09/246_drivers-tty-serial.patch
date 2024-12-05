@@ -1,0 +1,66 @@
+--- linux-6.6.51/drivers/tty/serial/atmel_serial.c	2024-12-05 13:07:54.432134200 +0900
++++ linux4microchip-fpga-2024.09/drivers/tty/serial/atmel_serial.c	2024-12-04 16:41:34.782908200 +0900
+@@ -2124,7 +2124,7 @@
+ {
+ 	struct atmel_uart_port *atmel_port = to_atmel_uart_port(port);
+ 	unsigned long flags;
+-	unsigned int old_mode, mode, imr, quot, div, cd, fp = 0;
++	unsigned int old_mode, mode, mdrop, imr, quot, div, cd, fp = 0;
+ 	unsigned int baud, actual_baud, gclk_rate;
+ 	int ret;
+ 
+@@ -2162,9 +2162,11 @@
+ 
+ 	/* parity */
+ 	if (termios->c_cflag & PARENB) {
+-		/* Mark or Space parity */
++		/* Mark, Space or Multidrop parity */
+ 		if (termios->c_cflag & CMSPAR) {
+-			if (termios->c_cflag & PARODD)
++			if (termios->c_cflag & PARMD)
++				mode |= ATMEL_US_PAR_MULTI_DROP;
++			else if (termios->c_cflag & PARODD)
+ 				mode |= ATMEL_US_PAR_MARK;
+ 			else
+ 				mode |= ATMEL_US_PAR_SPACE;
+@@ -2174,6 +2176,8 @@
+ 			mode |= ATMEL_US_PAR_EVEN;
+ 	} else
+ 		mode |= ATMEL_US_PAR_NONE;
++	mdrop = termios->c_cflag & SENDA ? ATMEL_US_SENDA : 0;
++	termios->c_cflag &= ~SENDA; /* SENDA bit must be cleared once used */
+ 
+ 	spin_lock_irqsave(&port->lock, flags);
+ 
+@@ -2365,7 +2369,8 @@
+ 	}
+ 
+ 	atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_RSTSTA | ATMEL_US_RSTRX);
+-	atmel_uart_writel(port, ATMEL_US_CR, ATMEL_US_TXEN | ATMEL_US_RXEN);
++	atmel_uart_writel(port, ATMEL_US_CR,
++			  mdrop | ATMEL_US_TXEN | ATMEL_US_RXEN);
+ 	atmel_port->tx_stopped = false;
+ 
+ 	/* restore interrupts */
+--- linux-6.6.51/include/linux/tty.h	2024-12-05 13:07:57.799130600 +0900
++++ linux4microchip-fpga-2024.09/include/linux/tty.h	2024-12-04 16:41:38.124966800 +0900
+@@ -97,6 +97,8 @@
+ #define C_CIBAUD(tty)	_C_FLAG((tty), CIBAUD)
+ #define C_CRTSCTS(tty)	_C_FLAG((tty), CRTSCTS)
+ #define C_CMSPAR(tty)	_C_FLAG((tty), CMSPAR)
++#define C_PARMD(tty)	_C_FLAG((tty), PARMD)
++#define C_SENDA(tty)	_C_FLAG((tty), SENDA)
+ 
+ #define L_ISIG(tty)	_L_FLAG((tty), ISIG)
+ #define L_ICANON(tty)	_L_FLAG((tty), ICANON)
+--- linux-6.6.51/include/uapi/asm-generic/termbits.h	2024-12-05 13:07:58.293802300 +0900
++++ linux4microchip-fpga-2024.09/include/uapi/asm-generic/termbits.h	2024-12-04 16:41:38.618645900 +0900
+@@ -105,6 +105,8 @@
+ #define HUPCL		0x00000400
+ #define CLOCAL		0x00000800
+ #define CBAUDEX		0x00001000
++#define PARMD		040000000
++#define SENDA		0100000000
+ #define BOTHER		0x00001000
+ #define     B57600	0x00001001
+ #define    B115200	0x00001002

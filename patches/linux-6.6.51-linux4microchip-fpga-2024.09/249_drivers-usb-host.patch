@@ -1,0 +1,272 @@
+--- linux-6.6.51/Documentation/devicetree/bindings/usb/generic-ehci.yaml	2024-12-05 13:07:31.933818000 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/usb/generic-ehci.yaml	2024-12-04 16:41:11.349340200 +0900
+@@ -104,6 +104,10 @@
+         - if a USB DRD channel: first clock should be host and second
+           one should be peripheral
+ 
++  clock-names:
++    minItems: 1
++    maxItems: 4
++
+   power-domains:
+     maxItems: 1
+ 
+--- linux-6.6.51/Documentation/devicetree/bindings/usb/microchip,mpfs-musb.yaml	2024-12-05 13:07:31.940797400 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/usb/microchip,mpfs-musb.yaml	2024-12-04 16:41:11.357318800 +0900
+@@ -14,14 +14,19 @@
+ 
+ properties:
+   compatible:
+-    enum:
+-      - microchip,mpfs-musb
++    oneOf:
++      - items:
++          - const: microchip,pic64gx-musb
++          - const: microchip,mpfs-musb
++      - const: microchip,mpfs-musb
+ 
+   dr_mode: true
+ 
+   reg:
+     maxItems: 1
+ 
++  dma-noncoherent: true
++
+   interrupts:
+     minItems: 2
+     maxItems: 2
+@@ -34,6 +39,13 @@
+   clocks:
+     maxItems: 1
+ 
++  microchip,ext-vbus-drv:
++    description:
++      Some ULPI USB PHYs do not support an internal VBUS supply and driving
++      the CPEN pin requires the configuration of the ulpi UPLI_USE__EXTVBUS
++      bit in ULPI_BUSCONTROL.
++    $ref: /schemas/types.yaml#/definitions/flag
++
+ required:
+   - compatible
+   - reg
+--- linux-6.6.51/drivers/usb/host/ohci-at91.c	2024-12-05 13:07:54.689445800 +0900
++++ linux4microchip-fpga-2024.09/drivers/usb/host/ohci-at91.c	2024-12-04 16:41:35.035233100 +0900
+@@ -24,10 +24,12 @@
+ #include <linux/module.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/of.h>
++#include <linux/phy/phy.h>
+ #include <linux/regmap.h>
+ #include <linux/usb.h>
+ #include <linux/usb/hcd.h>
+ #include <soc/at91/atmel-sfr.h>
++#include <soc/at91/sama7-sfr.h>
+ 
+ #include "ohci.h"
+ 
+@@ -39,6 +41,12 @@
+ #define hcd_to_ohci_at91_priv(h) \
+ 	((struct ohci_at91_priv *)hcd_to_ohci(h)->priv)
+ 
++struct at91_ohci_cfg {
++	unsigned int ohciicr;
++};
++
++static const struct of_device_id at91_ohci_dt_ids[];
++
+ #define AT91_MAX_USBH_PORTS	3
+ struct at91_usbh_data {
+ 	struct gpio_desc *vbus_pin[AT91_MAX_USBH_PORTS];
+@@ -47,6 +55,7 @@
+ 	u8 overcurrent_supported;
+ 	u8 overcurrent_status[AT91_MAX_USBH_PORTS];
+ 	u8 overcurrent_changed[AT91_MAX_USBH_PORTS];
++	struct ohci_at91_priv *ohci_at91;
+ };
+ 
+ struct ohci_at91_priv {
+@@ -57,6 +66,8 @@
+ 	bool wakeup;		/* Saved wake-up state for resume */
+ 	struct regmap *sfr_regmap;
+ 	u32 suspend_smc_id;
++	const struct at91_ohci_cfg *cfg;
++	struct phy *phy[AT91_MAX_USBH_PORTS];
+ };
+ /* interface and function clocks; sometimes also an AHB clock */
+ 
+@@ -72,9 +83,15 @@
+ 
+ static void at91_start_clock(struct ohci_at91_priv *ohci_at91)
+ {
++	int i;
++
+ 	if (ohci_at91->clocked)
+ 		return;
+ 
++	at91_for_each_port(i) {
++		phy_power_on(ohci_at91->phy[i]);
++	}
++
+ 	clk_set_rate(ohci_at91->fclk, 48000000);
+ 	clk_prepare_enable(ohci_at91->hclk);
+ 	clk_prepare_enable(ohci_at91->iclk);
+@@ -84,12 +101,19 @@
+ 
+ static void at91_stop_clock(struct ohci_at91_priv *ohci_at91)
+ {
++	int i;
++
+ 	if (!ohci_at91->clocked)
+ 		return;
+ 
+ 	clk_disable_unprepare(ohci_at91->fclk);
+ 	clk_disable_unprepare(ohci_at91->iclk);
+ 	clk_disable_unprepare(ohci_at91->hclk);
++
++	at91_for_each_port(i) {
++		phy_power_off(ohci_at91->phy[i]);
++	}
++
+ 	ohci_at91->clocked = false;
+ }
+ 
+@@ -153,11 +177,12 @@
+ 	struct regmap *regmap;
+ 
+ 	regmap = syscon_regmap_lookup_by_compatible("atmel,sama5d2-sfr");
+-	if (IS_ERR(regmap)) {
++	if (IS_ERR(regmap))
+ 		regmap = syscon_regmap_lookup_by_compatible("microchip,sam9x60-sfr");
+-		if (IS_ERR(regmap))
+-			regmap = NULL;
+-	}
++	if (IS_ERR(regmap))
++		regmap = syscon_regmap_lookup_by_compatible("microchip,sama7g5-sfr");
++	if (IS_ERR(regmap))
++		regmap = NULL;
+ 
+ 	return regmap;
+ }
+@@ -186,8 +211,10 @@
+ 	struct usb_hcd *hcd;
+ 	struct ohci_at91_priv *ohci_at91;
+ 	struct device *dev = &pdev->dev;
++	const struct of_device_id *match;
++	struct device_node *np = dev->of_node;
+ 	struct resource *res;
+-	int irq;
++	int i, irq;
+ 
+ 	irq = platform_get_irq(pdev, 0);
+ 	if (irq < 0)
+@@ -206,6 +233,15 @@
+ 	hcd->rsrc_start = res->start;
+ 	hcd->rsrc_len = resource_size(res);
+ 
++	match = of_match_node(at91_ohci_dt_ids, np);
++	if (match && match->data) {
++		ohci_at91->cfg = match->data;
++	} else {
++		dev_err(dev, "failed to match compatible node\n");
++		retval = PTR_ERR(match);
++		goto err;
++	}
++
+ 	ohci_at91->iclk = devm_clk_get(dev, "ohci_clk");
+ 	if (IS_ERR(ohci_at91->iclk)) {
+ 		dev_err(dev, "failed to get ohci_clk\n");
+@@ -233,7 +269,22 @@
+ 			dev_dbg(dev, "failed to find sfr node\n");
+ 	}
+ 
++	at91_for_each_port(i) {
++		ohci_at91->phy[i] =  devm_of_phy_get_by_index(dev, np, i);
++
++		/* The phy is optional */
++		if (IS_ERR(ohci_at91->phy[i]) &&
++		   (PTR_ERR(ohci_at91->phy[i]) == -ENODEV)) {
++			dev_dbg(dev, "Optional PHY %d missing\n", i);
++			ohci_at91->phy[i] = NULL;
++		}
++
++		phy_init(ohci_at91->phy[i]);
++		phy_set_mode(ohci_at91->phy[i], PHY_MODE_USB_HOST);
++	}
++
+ 	board = hcd->self.controller->platform_data;
++	board->ohci_at91 = ohci_at91;
+ 	ohci = hcd_to_ohci(hcd);
+ 	ohci->num_ports = board->ports;
+ 	at91_start_hc(pdev);
+@@ -330,7 +381,7 @@
+ 		if (res.a0)
+ 			return -EINVAL;
+ 	} else if (regmap) {
+-		ret = regmap_read(regmap, AT91_SFR_OHCIICR, &regval);
++		ret = regmap_read(regmap, ohci_at91->cfg->ohciicr, &regval);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -339,7 +390,7 @@
+ 		else
+ 			regval &= ~AT91_OHCIICR_USB_SUSPEND;
+ 
+-		regmap_write(regmap, AT91_SFR_OHCIICR, regval);
++		regmap_write(regmap, ohci_at91->cfg->ohciicr, regval);
+ 	}
+ 
+ 	return 0;
+@@ -519,8 +570,17 @@
+ 	return IRQ_HANDLED;
+ }
+ 
++static const struct at91_ohci_cfg at91rm9200_cfg = {
++	.ohciicr = AT91_SFR_OHCIICR,
++};
++
++static const struct at91_ohci_cfg sama7g5_cfg = {
++	.ohciicr = SAMA7_SFR_OHCIICR,
++};
++
+ static const struct of_device_id at91_ohci_dt_ids[] = {
+-	{ .compatible = "atmel,at91rm9200-ohci" },
++	{ .compatible = "atmel,at91rm9200-ohci", .data = &at91rm9200_cfg },
++	{ .compatible = "microchip,sama7g5-ohci", .data = &sama7g5_cfg },
+ 	{ /* sentinel */ }
+ };
+ 
+@@ -661,6 +721,15 @@
+ {
+ 	struct usb_hcd	*hcd = dev_get_drvdata(dev);
+ 	struct ohci_at91_priv *ohci_at91 = hcd_to_ohci_at91_priv(hcd);
++	int i;
++
++	at91_for_each_port(i) {
++		if (!ohci_at91->phy[i])
++			continue;
++
++		phy_init(ohci_at91->phy[i]);
++		phy_set_mode(ohci_at91->phy[i], PHY_MODE_USB_HOST);
++	}
+ 
+ 	ohci_at91_port_suspend(ohci_at91, 0);
+ 
+--- linux-6.6.51/drivers/usb/musb/mpfs.c	2024-12-05 13:07:54.751309400 +0900
++++ linux4microchip-fpga-2024.09/drivers/usb/musb/mpfs.c	2024-12-04 16:41:35.099062100 +0900
+@@ -175,6 +175,7 @@
+ 	musb_pdev->dev.parent = dev;
+ 	musb_pdev->dev.coherent_dma_mask = DMA_BIT_MASK(39);
+ 	musb_pdev->dev.dma_mask = &musb_pdev->dev.coherent_dma_mask;
++	musb_pdev->dev.dma_range_map = pdev->dev.dma_range_map;
+ 	device_set_of_node_from_dev(&musb_pdev->dev, dev);
+ 
+ 	glue->dev = dev;
+@@ -190,6 +191,8 @@
+ 	pdata->config = &mpfs_musb_hdrc_config;
+ 	pdata->platform_ops = &mpfs_ops;
+ 
++	pdata->extvbus = device_property_read_bool(dev, "microchip,ext-vbus-drv");
++
+ 	pdata->mode = usb_get_dr_mode(dev);
+ 	if (pdata->mode == USB_DR_MODE_UNKNOWN) {
+ 		dev_info(dev, "No dr_mode property found, defaulting to otg\n");

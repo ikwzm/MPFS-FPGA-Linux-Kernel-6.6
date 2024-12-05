@@ -1,0 +1,11 @@
+--- linux-6.6.51/drivers/clocksource/Kconfig	2024-12-05 13:07:41.024496700 +0900
++++ linux4microchip-fpga-2024.09/drivers/clocksource/Kconfig	2024-12-04 16:41:20.377187300 +0900
+@@ -716,7 +716,7 @@
+ 	  Support for the Operating System Timer of the Ingenic JZ SoCs.
+ 
+ config MICROCHIP_PIT64B
+-	bool "Microchip PIT64B support"
++	bool "Microchip PIT64B support" if COMPILE_TEST
+ 	depends on OF && ARM
+ 	select TIMER_OF
+ 	help

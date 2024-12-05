@@ -1,0 +1,116 @@
+--- linux-6.6.51/Documentation/devicetree/bindings/pinctrl/atmel,at91-pio4-pinctrl.txt	2024-12-05 13:07:31.391266700 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/pinctrl/atmel,at91-pio4-pinctrl.txt	2024-12-04 16:41:10.672151700 +0900
+@@ -6,6 +6,7 @@
+ Required properties:
+ - compatible:
+ 	"atmel,sama5d2-pinctrl"
++	"microchip,sama7d65-pinctrl"
+ 	"microchip,sama7g5-pinctrl"
+ - reg: base address and length of the PIO controller.
+ - interrupts: interrupt outputs from the controller, one for each bank.
+--- linux-6.6.51/drivers/pinctrl/pinctrl-at91-pio4.c	2024-12-05 13:07:52.237024100 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/pinctrl-at91-pio4.c	2024-12-04 16:41:32.441173200 +0900
+@@ -434,6 +434,8 @@
+ }
+ 
+ static struct gpio_chip atmel_gpio_chip = {
++	.request		= gpiochip_generic_request,
++	.free			= gpiochip_generic_free,
+ 	.direction_input        = atmel_gpio_direction_input,
+ 	.get                    = atmel_gpio_get,
+ 	.get_multiple           = atmel_gpio_get_multiple,
+@@ -720,11 +722,27 @@
+ 	return 0;
+ }
+ 
++static int atmel_pmx_gpio_request_enable(struct pinctrl_dev *pctldev,
++					 struct pinctrl_gpio_range *range,
++					 unsigned offset)
++{
++	u32 conf;
++
++	conf = atmel_pin_config_read(pctldev, offset);
++	conf &= (~ATMEL_PIO_CFGR_FUNC_MASK);
++	atmel_pin_config_write(pctldev, offset, conf);
++
++	dev_dbg(pctldev->dev, "enable pin %u as GPIO\n", offset);
++
++	return 0;
++}
++
+ static const struct pinmux_ops atmel_pmxops = {
+ 	.get_functions_count	= atmel_pmx_get_functions_count,
+ 	.get_function_name	= atmel_pmx_get_function_name,
+ 	.get_function_groups	= atmel_pmx_get_function_groups,
+ 	.set_mux		= atmel_pmx_set_mux,
++	.gpio_request_enable	= atmel_pmx_gpio_request_enable,
+ };
+ 
+ static int atmel_conf_pin_config_group_get(struct pinctrl_dev *pctldev,
+@@ -1038,7 +1056,7 @@
+ }
+ 
+ static const struct dev_pm_ops atmel_pctrl_pm_ops = {
+-	SET_SYSTEM_SLEEP_PM_OPS(atmel_pctrl_suspend, atmel_pctrl_resume)
++	SET_LATE_SYSTEM_SLEEP_PM_OPS(atmel_pctrl_suspend, atmel_pctrl_resume)
+ };
+ 
+ /*
+@@ -1056,6 +1074,12 @@
+ 	.slew_rate_support	= 1,
+ };
+ 
++static const struct atmel_pioctrl_data microchip_sama7d65_pioctrl_data = {
++	.nbanks			= 5,
++	.last_bank_count	= 14, /* sama7d65 has only PE0 to PE13 */
++	.slew_rate_support	= 1,
++};
++
+ static const struct of_device_id atmel_pctrl_of_match[] = {
+ 	{
+ 		.compatible = "atmel,sama5d2-pinctrl",
+@@ -1064,6 +1088,9 @@
+ 		.compatible = "microchip,sama7g5-pinctrl",
+ 		.data = &microchip_sama7g5_pioctrl_data,
+ 	}, {
++		.compatible = "microchip,sama7d65-pinctrl",
++		.data = &microchip_sama7d65_pioctrl_data,
++	}, {
+ 		/* sentinel */
+ 	}
+ };
+--- linux-6.6.51/drivers/pinctrl/pinctrl-at91.c	2024-12-05 13:07:52.238004300 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/pinctrl-at91.c	2024-12-04 16:41:32.442170400 +0900
+@@ -12,10 +12,9 @@
+ #include <linux/interrupt.h>
+ #include <linux/io.h>
+ #include <linux/of.h>
+-#include <linux/of_address.h>
+-#include <linux/of_device.h>
+-#include <linux/of_irq.h>
++#include <linux/platform_device.h>
+ #include <linux/pm.h>
++#include <linux/property.h>
+ #include <linux/seq_file.h>
+ #include <linux/slab.h>
+ #include <linux/string_helpers.h>
+@@ -1302,8 +1301,8 @@
+ 	if (!np)
+ 		return -ENODEV;
+ 
+-	info->dev = dev;
+-	info->ops = of_device_get_match_data(dev);
++	info->dev = &pdev->dev;
++	info->ops = device_get_match_data(&pdev->dev);
+ 	at91_pinctrl_child_count(info, np);
+ 
+ 	/*
+@@ -1845,7 +1844,7 @@
+ 	if (IS_ERR(at91_chip->regbase))
+ 		return PTR_ERR(at91_chip->regbase);
+ 
+-	at91_chip->ops = of_device_get_match_data(dev);
++	at91_chip->ops = device_get_match_data(dev);
+ 	at91_chip->pioc_virq = irq;
+ 
+ 	at91_chip->clock = devm_clk_get_enabled(dev, NULL);

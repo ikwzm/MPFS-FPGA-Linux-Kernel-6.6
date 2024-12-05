@@ -1,0 +1,950 @@
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/crypto/microchip,mpfs-crypto.yaml	2024-12-04 16:41:09.626948200 +0900
+@@ -0,0 +1,44 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/crypto/microchip,mpfs-crypto.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Microchip PolarFire SoC (MPFS) MSS (microprocessor subsystem) User Crypto
++
++maintainers:
++  - Padmarao Begari <padmarao.begari@microchip.com>
++
++properties:
++  compatible:
++    const: microchip,mpfs-crypto
++
++  reg:
++    maxItems: 1
++
++  interrupts:
++    maxItems: 1
++
++  clocks:
++    items:
++      - description: AHB peripheral clock
++      - description: Crypto clock
++
++required:
++  - compatible
++  - reg
++  - clocks
++  - interrupts
++
++additionalProperties: false
++
++examples:
++  - |
++    #include "dt-bindings/clock/microchip,mpfs-clock.h"
++    crypto@22000000 {
++        compatible = "microchip,mpfs-crypto";
++        reg = <0x22000000 0x10000>;
++        clocks = <&clkcfg 0>, <&clkcfg 1>;
++        interrupt-parent = <&plic>;
++        interrupts = <112>;
++    };
+--- linux-6.6.51/drivers/crypto/Kconfig	2024-12-05 13:07:41.206040200 +0900
++++ linux4microchip-fpga-2024.09/drivers/crypto/Kconfig	2024-12-04 16:41:20.554712100 +0900
+@@ -795,6 +795,7 @@
+ 	  acceleration for cryptographic algorithms on these devices.
+ 
+ source "drivers/crypto/aspeed/Kconfig"
++source "drivers/crypto/microchip/Kconfig"
+ source "drivers/crypto/starfive/Kconfig"
+ 
+ endif # CRYPTO_HW
+--- linux-6.6.51/drivers/crypto/Makefile	2024-12-05 13:07:41.206040200 +0900
++++ linux4microchip-fpga-2024.09/drivers/crypto/Makefile	2024-12-04 16:41:20.557704000 +0900
+@@ -51,3 +51,4 @@
+ obj-$(CONFIG_CRYPTO_DEV_AMLOGIC_GXL) += amlogic/
+ obj-y += intel/
+ obj-y += starfive/
++obj-y += microchip/
+--- linux-6.6.51/drivers/crypto/atmel-aes.c	2024-12-05 13:07:41.221968400 +0900
++++ linux4microchip-fpga-2024.09/drivers/crypto/atmel-aes.c	2024-12-04 16:41:20.575656100 +0900
+@@ -84,7 +84,16 @@
+ 
+ #define ATMEL_AES_DMA_THRESHOLD		256
+ 
+-
++/**
++ * struct atmel_aes_caps: at91 aes capabilities
++ * @has_dualbuff: dual buffer support
++ * @has_cfb64: cfb64 support
++ * @has_gcm: gcm support
++ * @has_xts: xts support
++ * @has_authenc: authentication support
++ * @max_burst_size: max DMA bust size
++ * @has_6words_limitation: some versions of IP have a 6 word headder limitation
++ */
+ struct atmel_aes_caps {
+ 	bool			has_dualbuff;
+ 	bool			has_cfb64;
+@@ -92,6 +101,7 @@
+ 	bool			has_xts;
+ 	bool			has_authenc;
+ 	u32			max_burst_size;
++	bool			has_6words_limitation;
+ };
+ 
+ struct atmel_aes_dev;
+@@ -150,6 +160,8 @@
+ struct atmel_aes_authenc_ctx {
+ 	struct atmel_aes_base_ctx	base;
+ 	struct atmel_sha_authenc_ctx	*auth;
++
++	struct crypto_aead		*fallback;
+ };
+ #endif
+ 
+@@ -2120,6 +2132,14 @@
+ 	memcpy(ctx->base.key, keys.enckey, keys.enckeylen);
+ 
+ 	memzero_explicit(&keys, sizeof(keys));
++
++	if (ctx->base.dd->caps.has_6words_limitation) {
++		crypto_aead_clear_flags(ctx->fallback, CRYPTO_TFM_REQ_MASK);
++		crypto_aead_set_flags(ctx->fallback,
++				      crypto_aead_get_flags(tfm) &
++				      CRYPTO_TFM_REQ_MASK);
++		crypto_aead_setkey(ctx->fallback, key, keylen);
++	}
+ 	return 0;
+ 
+ badkey:
+@@ -2132,15 +2152,27 @@
+ {
+ 	struct atmel_aes_authenc_ctx *ctx = crypto_aead_ctx(tfm);
+ 	unsigned int auth_reqsize = atmel_sha_authenc_get_reqsize();
++	struct aead_alg *alg = crypto_aead_alg(tfm);
+ 	struct atmel_aes_dev *dd;
+ 
+ 	dd = atmel_aes_dev_alloc(&ctx->base);
+ 	if (!dd)
+ 		return -ENODEV;
+ 
++	if (dd->caps.has_6words_limitation) {
++		ctx->fallback = crypto_alloc_aead(alg->base.cra_name, 0,
++						CRYPTO_ALG_NEED_FALLBACK | CRYPTO_ALG_ASYNC);
++		if (IS_ERR(ctx->fallback)) {
++			dev_err(dd->dev, "fallback driver fail %s\n", alg->base.cra_name);
++			return PTR_ERR(ctx->fallback);
++		}
++	}
+ 	ctx->auth = atmel_sha_authenc_spawn(auth_mode);
+-	if (IS_ERR(ctx->auth))
++	if (IS_ERR(ctx->auth)) {
++		if (dd->caps.has_6words_limitation)
++			crypto_free_aead(ctx->fallback);
+ 		return PTR_ERR(ctx->auth);
++	}
+ 
+ 	crypto_aead_set_reqsize(tfm, (sizeof(struct atmel_aes_authenc_reqctx) +
+ 				      auth_reqsize));
+@@ -2180,6 +2212,8 @@
+ 	struct atmel_aes_authenc_ctx *ctx = crypto_aead_ctx(tfm);
+ 
+ 	atmel_sha_authenc_free(ctx->auth);
++	if (ctx->base.dd->caps.has_6words_limitation)
++		crypto_free_aead(ctx->fallback);
+ }
+ 
+ static int atmel_aes_authenc_crypt(struct aead_request *req,
+@@ -2188,8 +2222,10 @@
+ 	struct atmel_aes_authenc_reqctx *rctx = aead_request_ctx(req);
+ 	struct crypto_aead *tfm = crypto_aead_reqtfm(req);
+ 	struct atmel_aes_base_ctx *ctx = crypto_aead_ctx(tfm);
++	struct atmel_aes_authenc_ctx *actx = crypto_aead_ctx(tfm);
+ 	u32 authsize = crypto_aead_authsize(tfm);
+ 	bool enc = (mode & AES_FLAGS_ENCRYPT);
++	bool limitation = ctx->dd->caps.has_6words_limitation;
+ 
+ 	/* Compute text length. */
+ 	if (!enc && req->cryptlen < authsize)
+@@ -2203,6 +2239,25 @@
+ 	 */
+ 	if (!rctx->textlen && !req->assoclen)
+ 		return -EINVAL;
++	/*
++	 *Check if data size triggers the HW limitation and
++	 * run fallback functions
++	 */
++	if ((req->assoclen != 16) && limitation) {
++		struct aead_request *subreq = aead_request_ctx(req);
++
++		aead_request_set_tfm(subreq, actx->fallback);
++		aead_request_set_callback(subreq, req->base.flags,
++					  req->base.complete, req->base.data);
++		aead_request_set_crypt(subreq, req->src, req->dst,
++				       req->cryptlen, req->iv);
++		aead_request_set_ad(subreq, req->assoclen);
++
++		if (enc)
++			return crypto_aead_encrypt(subreq);
++		else
++			return crypto_aead_decrypt(subreq);
++	}
+ 
+ 	rctx->base.mode = mode;
+ 	ctx->block_size = AES_BLOCK_SIZE;
+@@ -2500,11 +2555,15 @@
+ 	dd->caps.has_xts = 0;
+ 	dd->caps.has_authenc = 0;
+ 	dd->caps.max_burst_size = 1;
++	dd->caps.has_6words_limitation = 0;
+ 
+ 	/* keep only major version number */
+ 	switch (dd->hw_version & 0xff0) {
+ 	case 0x700:
+ 	case 0x600:
++		dd->caps.has_6words_limitation = 1;
++		fallthrough;
++	case 0x800:
+ 	case 0x500:
+ 		dd->caps.has_dualbuff = 1;
+ 		dd->caps.has_cfb64 = 1;
+--- linux-6.6.51/drivers/crypto/atmel-sha.c	2024-12-05 13:07:41.224960300 +0900
++++ linux4microchip-fpga-2024.09/drivers/crypto/atmel-sha.c	2024-12-04 16:41:20.577650700 +0900
+@@ -2534,6 +2534,7 @@
+ 
+ 	/* keep only major version number */
+ 	switch (dd->hw_version & 0xff0) {
++	case 0x800:
+ 	case 0x700:
+ 	case 0x600:
+ 	case 0x510:
+diff -urN '--label=/dev/null' /dev/null linux4microchip-fpga-2024.09/drivers/crypto/microchip/Kconfig
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/crypto/microchip/Kconfig	2024-12-04 16:41:21.842291200 +0900
+@@ -0,0 +1,22 @@
++#
++# Microchip Crypto drivers configuration
++#
++
++config CRYPTO_DEV_POLARFIRE_SOC
++	tristate "Microchip PolarFire SoC User cryptographic engine driver"
++	depends on RISCV_SBI
++	depends on SOC_MICROCHIP_POLARFIRE || COMPILE_TEST
++	select CRYPTO_ENGINE
++	select CRYPTO_AES
++	select CRYPTO_AEAD
++	select CRYPTO_AKCIPHER
++	select CRYPTO_KPP
++	select CRYPTO_SKCIPHER
++	default y
++	help
++	  Support for Microchip PolarFire SoC User crypto engine.
++	  This module provides acceleration for skcipher functions.
++
++	  If you choose 'M' here, this module will be called microchip-crypto.
++
++	  If unsure, say N.
+diff -urN '--label=/dev/null' /dev/null linux4microchip-fpga-2024.09/drivers/crypto/microchip/Makefile
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/crypto/microchip/Makefile	2024-12-04 16:41:21.842291200 +0900
+@@ -0,0 +1,4 @@
++# SPDX-License-Identifier: GPL-2.0
++
++obj-$(CONFIG_CRYPTO_DEV_POLARFIRE_SOC) += mchp-crypto.o
++mchp-crypto-objs := mchp-crypto-sbi.o mchp-crypto-sbi-aes.o
+diff -urN '--label=/dev/null' /dev/null linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi-aes.c
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi-aes.c	2024-12-04 16:41:21.842291200 +0900
+@@ -0,0 +1,371 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Microchip PolarFire SoC (MPFS) User Crypto driver
++ *
++ * Copyright (c) 2023 Microchip Corporation. All rights reserved.
++ *
++ * Author: Padmarao Begari <padmarao.begari@microchip.com>
++ *
++ */
++
++#include <crypto/engine.h>
++#include <crypto/internal/skcipher.h>
++#include <crypto/scatterwalk.h>
++#include <linux/crypto.h>
++#include <linux/dma-mapping.h>
++#include <linux/err.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <asm/sbi.h>
++#include "mchp-crypto-sbi.h"
++
++#define MCHP_AES_DIR_DECRYPT		0x00
++#define MCHP_AES_DIR_ENCRYPT		0x01
++
++#define MCHP_AES_MODE_ECB		0x0100
++#define MCHP_AES_MODE_CBC		0x0200
++#define MCHP_AES_MODE_CFB		0x0300
++#define MCHP_AES_MODE_OFB		0x0400
++#define MCHP_AES_MODE_CTR		0x0500
++#define MCHP_AES_MODE_GCM		0x0600
++#define MCHP_AES_MODE_CCM		0x0700
++#define MCHP_AES_MODE_GHASH		0x0800
++#define MCHP_AES_MODE_MASK		0x0F00
++
++#define MCHP_AES_TYPE_128		0x010000
++#define MCHP_AES_TYPE_192		0x020000
++#define MCHP_AES_TYPE_256		0x030000
++
++struct mchp_crypto_aes_algo {
++	u64 algonum;
++	struct skcipher_engine_alg algo;
++};
++
++struct mchp_crypto_aes_req {
++	u64 src;
++	u64 iv;
++	u64 key;
++	u64 dst;
++	u64 size;
++};
++
++static int mchp_aes_do_one_req(struct crypto_engine *engine, void *areq)
++{
++	struct skcipher_request *req =
++			container_of(areq, struct skcipher_request, base);
++	struct crypto_skcipher *tfm = crypto_skcipher_reqtfm(req);
++	struct mchp_crypto_ctx *ctx = crypto_skcipher_ctx(tfm);
++	struct device *dev = ctx->cryp->dev;
++	struct mchp_crypto_aes_req *aes_req;
++	dma_addr_t dma_addr_data, dma_addr_aes_req;
++	unsigned int iv_size;
++	unsigned int data_size;
++	size_t dma_size;
++	char *kbuf;
++	int ret;
++
++	switch (ctx->keylen) {
++	case AES_KEYSIZE_128:
++		ctx->flags |= MCHP_AES_TYPE_128;
++		break;
++	case AES_KEYSIZE_192:
++		ctx->flags |= MCHP_AES_TYPE_192;
++		break;
++	case AES_KEYSIZE_256:
++		ctx->flags |= MCHP_AES_TYPE_256;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	iv_size = crypto_skcipher_ivsize(tfm);
++
++	dma_size = req->cryptlen + ctx->keylen + iv_size;
++
++	kbuf = dma_alloc_coherent(dev, dma_size, &dma_addr_data, GFP_KERNEL);
++	if (!kbuf)
++		return -ENOMEM;
++
++	aes_req = dma_alloc_coherent(dev, sizeof(struct mchp_crypto_aes_req),
++				     &dma_addr_aes_req, GFP_KERNEL);
++	if (!aes_req) {
++		dma_free_coherent(dev, dma_size, kbuf, dma_addr_data);
++		return -ENOMEM;
++	}
++
++	sg_copy_to_buffer(req->src, sg_nents(req->src),
++			  kbuf, req->cryptlen);
++	data_size = req->cryptlen;
++	memcpy(kbuf + data_size, req->iv, iv_size);
++	memcpy(kbuf + data_size + iv_size, ctx->key, ctx->keylen);
++
++	aes_req->src = dma_addr_data;
++	aes_req->dst = dma_addr_data;
++	aes_req->iv = aes_req->src + data_size;
++	aes_req->size = data_size;
++	aes_req->key = aes_req->src + data_size + iv_size;
++
++	ret = mchp_crypto_sbi_services(CRYPTO_SERVICE_AES,
++				     dma_addr_aes_req, ctx->flags);
++	if (!ret)
++		sg_copy_from_buffer(req->dst, sg_nents(req->dst),
++				    kbuf, data_size);
++
++	memzero_explicit(kbuf, dma_size);
++	dma_free_coherent(dev, dma_size, kbuf, dma_addr_data);
++
++	memzero_explicit(aes_req, sizeof(struct mchp_crypto_aes_req));
++	dma_free_coherent(dev, sizeof(struct mchp_crypto_aes_req),
++			  aes_req, dma_addr_aes_req);
++
++	crypto_finalize_skcipher_request(engine, req, ret);
++
++	return ret;
++}
++
++static int mchp_aes_crypt(struct skcipher_request *req, unsigned long flags)
++{
++	struct crypto_skcipher *tfm = crypto_skcipher_reqtfm(req);
++	struct mchp_crypto_ctx *ctx = crypto_skcipher_ctx(tfm);
++	struct mchp_crypto_dev *cryp = ctx->cryp;
++	unsigned int blocksize_align = crypto_skcipher_blocksize(tfm) - 1;
++
++	ctx->flags = flags;
++
++	if ((ctx->flags & MCHP_AES_MODE_MASK) == MCHP_AES_MODE_ECB ||
++	    (ctx->flags & MCHP_AES_MODE_MASK) == MCHP_AES_MODE_CBC)
++		if (req->cryptlen & blocksize_align)
++			return -EINVAL;
++
++	return crypto_transfer_skcipher_request_to_engine(cryp->engine, req);
++}
++
++static int mchp_aes_ecb_encrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_ECB | MCHP_AES_DIR_ENCRYPT);
++}
++
++static int mchp_aes_ecb_decrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_ECB);
++}
++
++static int mchp_aes_cbc_encrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CBC | MCHP_AES_DIR_ENCRYPT);
++}
++
++static int mchp_aes_cbc_decrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CBC);
++}
++
++static int mchp_aes_cfb_encrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CFB | MCHP_AES_DIR_ENCRYPT);
++}
++
++static int mchp_aes_cfb_decrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CFB);
++}
++
++static int mchp_aes_ofb_encrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_OFB | MCHP_AES_DIR_ENCRYPT);
++}
++
++static int mchp_aes_ofb_decrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_OFB);
++}
++
++static int mchp_aes_ctr_encrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CTR | MCHP_AES_DIR_ENCRYPT);
++}
++
++static int mchp_aes_ctr_decrypt(struct skcipher_request *req)
++{
++	return mchp_aes_crypt(req, MCHP_AES_MODE_CTR);
++}
++
++static int mchp_aes_setkey(struct crypto_skcipher *tfm, const u8 *key,
++			   unsigned int keylen)
++{
++	struct mchp_crypto_ctx *ctx = crypto_skcipher_ctx(tfm);
++
++	if (!key || !keylen)
++		return -EINVAL;
++
++	if (keylen != AES_KEYSIZE_256 &&
++	    keylen != AES_KEYSIZE_192 &&
++	    keylen != AES_KEYSIZE_128)
++		return -EINVAL;
++
++	memcpy(ctx->key, key, keylen);
++	ctx->keylen = keylen;
++
++	return 0;
++}
++
++static int mchp_aes_init_tfm(struct crypto_skcipher *tfm)
++{
++	struct mchp_crypto_ctx *ctx = crypto_skcipher_ctx(tfm);
++
++	ctx->cryp = mchp_crypto_find_dev(ctx);
++	if (!ctx->cryp)
++		return -ENODEV;
++
++	crypto_skcipher_set_reqsize(tfm, sizeof(struct mchp_crypto_ctx) +
++				    sizeof(struct skcipher_request));
++
++	return 0;
++}
++
++static struct mchp_crypto_aes_algo mchp_aes_algs[] = {
++{
++	.algonum = CRYPTO_ALG_AES_ECB,
++	.algo.base = {
++		.base.cra_name		= "ecb(aes)",
++		.base.cra_driver_name	= "microchip-ecb-aes",
++		.base.cra_priority	= 300,
++		.base.cra_flags		= CRYPTO_ALG_ASYNC,
++		.base.cra_blocksize	= AES_BLOCK_SIZE,
++		.base.cra_ctxsize	= sizeof(struct mchp_crypto_ctx),
++		.base.cra_alignmask	= 0xf,
++		.base.cra_module	= THIS_MODULE,
++
++		.init			= mchp_aes_init_tfm,
++		.setkey			= mchp_aes_setkey,
++		.encrypt		= mchp_aes_ecb_encrypt,
++		.decrypt		= mchp_aes_ecb_decrypt,
++		.min_keysize		= AES_MIN_KEY_SIZE,
++		.max_keysize		= AES_MAX_KEY_SIZE,
++	},
++	.algo.op = {
++		.do_one_request = mchp_aes_do_one_req
++	},
++}, {
++	.algonum = CRYPTO_ALG_AES_CBC,
++	.algo.base = {
++		.base.cra_name		= "cbc(aes)",
++		.base.cra_driver_name	= "microchip-cbc-aes",
++		.base.cra_priority	= 300,
++		.base.cra_flags		= CRYPTO_ALG_ASYNC,
++		.base.cra_blocksize	= AES_BLOCK_SIZE,
++		.base.cra_ctxsize	= sizeof(struct mchp_crypto_ctx),
++		.base.cra_alignmask	= 0xf,
++		.base.cra_module	= THIS_MODULE,
++
++		.init			= mchp_aes_init_tfm,
++		.setkey			= mchp_aes_setkey,
++		.encrypt		= mchp_aes_cbc_encrypt,
++		.decrypt		= mchp_aes_cbc_decrypt,
++		.min_keysize		= AES_MIN_KEY_SIZE,
++		.max_keysize		= AES_MAX_KEY_SIZE,
++		.ivsize			= AES_BLOCK_SIZE,
++	},
++	.algo.op = {
++		.do_one_request = mchp_aes_do_one_req
++	},
++}, {
++	.algonum = CRYPTO_ALG_AES_OFB,
++	.algo.base = {
++		.base.cra_name		= "ofb(aes)",
++		.base.cra_driver_name	= "microchip-ofb-aes",
++		.base.cra_priority	= 300,
++		.base.cra_flags		= CRYPTO_ALG_ASYNC,
++		.base.cra_blocksize	= 1,
++		.base.cra_ctxsize	= sizeof(struct mchp_crypto_ctx),
++		.base.cra_alignmask	= 0xf,
++		.base.cra_module	= THIS_MODULE,
++
++		.init			= mchp_aes_init_tfm,
++		.setkey			= mchp_aes_setkey,
++		.encrypt		= mchp_aes_ofb_encrypt,
++		.decrypt		= mchp_aes_ofb_decrypt,
++		.min_keysize		= AES_MIN_KEY_SIZE,
++		.max_keysize		= AES_MAX_KEY_SIZE,
++		.ivsize			= AES_BLOCK_SIZE,
++	},
++	.algo.op = {
++		.do_one_request = mchp_aes_do_one_req
++	},
++}, {
++	.algonum = CRYPTO_ALG_AES_CFB,
++	.algo.base = {
++		.base.cra_name		= "cfb(aes)",
++		.base.cra_driver_name	= "microchip-cfb-aes",
++		.base.cra_priority	= 300,
++		.base.cra_flags		= CRYPTO_ALG_ASYNC,
++		.base.cra_blocksize	= 1,
++		.base.cra_ctxsize	= sizeof(struct mchp_crypto_ctx),
++		.base.cra_alignmask	= 0xf,
++		.base.cra_module	= THIS_MODULE,
++
++		.init			= mchp_aes_init_tfm,
++		.setkey			= mchp_aes_setkey,
++		.encrypt		= mchp_aes_cfb_encrypt,
++		.decrypt		= mchp_aes_cfb_decrypt,
++		.min_keysize		= AES_MIN_KEY_SIZE,
++		.max_keysize		= AES_MAX_KEY_SIZE,
++		.ivsize			= AES_BLOCK_SIZE,
++	},
++	.algo.op = {
++		.do_one_request = mchp_aes_do_one_req
++	},
++}, {
++	.algonum = CRYPTO_ALG_AES_CTR,
++	.algo.base = {
++		.base.cra_name		= "ctr(aes)",
++		.base.cra_driver_name	= "microchip-ctr-aes",
++		.base.cra_priority	= 300,
++		.base.cra_flags		= CRYPTO_ALG_ASYNC,
++		.base.cra_blocksize	= 1,
++		.base.cra_ctxsize	= sizeof(struct mchp_crypto_ctx),
++		.base.cra_alignmask	= 0xf,
++		.base.cra_module	= THIS_MODULE,
++
++		.init			= mchp_aes_init_tfm,
++		.setkey			= mchp_aes_setkey,
++		.encrypt		= mchp_aes_ctr_encrypt,
++		.decrypt		= mchp_aes_ctr_decrypt,
++		.min_keysize		= AES_MIN_KEY_SIZE,
++		.max_keysize		= AES_MAX_KEY_SIZE,
++		.ivsize			= AES_BLOCK_SIZE,
++	},
++	.algo.op = {
++		.do_one_request = mchp_aes_do_one_req
++	},
++},
++};
++
++int mchp_aes_register_algs(struct mchp_crypto_dev *cryp)
++{
++	for (int i = 0; i < ARRAY_SIZE(mchp_aes_algs); i++) {
++		u64 algonum = mchp_aes_algs[i].algonum;
++		int ret;
++
++		if (!(algonum & cryp->crypto->cipher_algo))
++			continue;
++
++		ret = crypto_engine_register_skcipher(&mchp_aes_algs[i].algo);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++void mchp_aes_unregister_algs(struct mchp_crypto_dev *cryp)
++{
++	for (int i = 0; i < ARRAY_SIZE(mchp_aes_algs); i++) {
++		u64 algonum = mchp_aes_algs[i].algonum;
++
++		if (!(algonum & cryp->crypto->cipher_algo))
++			continue;
++
++		crypto_engine_unregister_skcipher(&mchp_aes_algs[i].algo);
++	}
++}
+diff -urN '--label=/dev/null' /dev/null linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi.c
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi.c	2024-12-04 16:41:21.844285700 +0900
+@@ -0,0 +1,226 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Microchip PolarFire SoC (MPFS) User Crypto driver
++ *
++ * Copyright (c) 2023 Microchip Corporation. All rights reserved.
++ *
++ * Author: Padmarao Begari <padmarao.begari@microchip.com>
++ *
++ */
++
++#include <crypto/engine.h>
++#include <linux/crypto.h>
++#include <linux/dma-mapping.h>
++#include <linux/err.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/platform_device.h>
++#include <linux/spinlock.h>
++#include <asm/sbi.h>
++#include "mchp-crypto-sbi.h"
++
++#define MPFS_CRYPTO_DMA_BIT_MASK		32
++
++static DEFINE_SPINLOCK(cryto_service_lock);
++
++static dma_addr_t dma_addr_crypto;
++static struct mchp_crypto_info *crypto_info;
++
++struct mchp_dev_list {
++	struct list_head	dev_list;
++	spinlock_t		lock; /* protect dev_list */
++};
++
++static struct mchp_dev_list dev_list = {
++	.dev_list = LIST_HEAD_INIT(dev_list.dev_list),
++	.lock     = __SPIN_LOCK_UNLOCKED(dev_list.lock),
++};
++
++struct mchp_crypto_dev *mchp_crypto_find_dev(struct mchp_crypto_ctx *ctx)
++{
++	struct mchp_crypto_dev *cryp = NULL, *tmp;
++
++	spin_lock(&dev_list.lock);
++	if (!ctx->cryp) {
++		list_for_each_entry(tmp, &dev_list.dev_list, list) {
++			cryp = tmp;
++			break;
++		}
++		ctx->cryp = cryp;
++	} else {
++		cryp = ctx->cryp;
++	}
++
++	spin_unlock(&dev_list.lock);
++
++	return cryp;
++}
++
++int mchp_crypto_sbi_services(u32 service, u64 crypto_addr, u32 flags)
++{
++	struct sbiret ret;
++
++	spin_lock(&cryto_service_lock);
++	ret = sbi_ecall(SBI_EXT_MICROCHIP_TECHNOLOGY,
++			MICROCHIP_SBI_EXT_CRYPTO_SERVICES,
++			service, crypto_addr, flags, 0, 0, 0);
++	spin_unlock(&cryto_service_lock);
++	if (ret.error)
++		return sbi_err_map_linux_errno(ret.error);
++	else
++		return ret.value;
++}
++
++static int mchp_crypto_sbi_sevices_probe(u64 crypto_addr)
++{
++	struct sbiret ret;
++
++	ret = sbi_ecall(SBI_EXT_MICROCHIP_TECHNOLOGY,
++			MICROCHIP_SBI_EXT_CRYPTO_SERVICES_PROBE,
++			crypto_addr, 0, 0, 0, 0, 0);
++	if (ret.error)
++		return sbi_err_map_linux_errno(ret.error);
++	else
++		return ret.value;
++}
++
++static int mchp_crypto_sbi_init(bool enable)
++{
++	struct sbiret ret;
++
++	ret = sbi_ecall(SBI_EXT_MICROCHIP_TECHNOLOGY,
++			MICROCHIP_SBI_EXT_CRYPTO_INIT,
++			enable, 0, 0, 0, 0, 0);
++	if (ret.error)
++		return sbi_err_map_linux_errno(ret.error);
++	else
++		return ret.value;
++}
++
++static inline int mchp_crypto_sbi_startup(void)
++{
++	return mchp_crypto_sbi_init(true);
++}
++
++static inline int mchp_crypto_sbi_shutdown(void)
++{
++	return mchp_crypto_sbi_init(false);
++}
++
++static int mchp_crypto_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mchp_crypto_dev *cryp;
++	int ret;
++
++	ret = dma_set_mask_and_coherent(dev, DMA_BIT_MASK(MPFS_CRYPTO_DMA_BIT_MASK));
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "No usable DMA configuration\n");
++
++	cryp = devm_kzalloc(dev, sizeof(*cryp), GFP_KERNEL);
++	if (!cryp)
++		return -ENOMEM;
++
++	platform_set_drvdata(pdev, cryp);
++
++	cryp->dev = dev;
++
++	ret = sbi_probe_extension(SBI_EXT_MICROCHIP_TECHNOLOGY);
++	if (!ret)
++		return dev_err_probe(dev, ret, "SBI extension not detected\n");
++
++	crypto_info = dma_alloc_coherent(dev, sizeof(struct mchp_crypto_info),
++					 &dma_addr_crypto, GFP_KERNEL);
++	if (!crypto_info)
++		return -ENOMEM;
++
++	/* Initializes the crypto processor and enable clock. */
++	ret = mchp_crypto_sbi_startup();
++	if (ret < 0)
++		goto err_free_info;
++
++	ret = mchp_crypto_sbi_sevices_probe(dma_addr_crypto);
++	if (ret < 0)
++		goto err_crypto_shutdown;
++
++	cryp->crypto = crypto_info;
++
++	spin_lock(&dev_list.lock);
++	list_add(&cryp->list, &dev_list.dev_list);
++	spin_unlock(&dev_list.lock);
++
++	cryp->engine = crypto_engine_alloc_init(dev, 1);
++	if (!cryp->engine) {
++		ret = -ENOMEM;
++		goto err_list_del;
++	}
++
++	ret = crypto_engine_start(cryp->engine);
++	if (ret)
++		goto err_engine_exit;
++
++	if (cryp->crypto->services & CRYPTO_SERVICE_AES) {
++		ret = mchp_aes_register_algs(cryp);
++		if (ret)
++			goto err_engine_stop;
++	}
++
++	return 0;
++
++err_engine_stop:
++	crypto_engine_stop(cryp->engine);
++err_engine_exit:
++	crypto_engine_exit(cryp->engine);
++err_list_del:
++	spin_lock(&dev_list.lock);
++	list_del(&cryp->list);
++	spin_unlock(&dev_list.lock);
++err_crypto_shutdown:
++	mchp_crypto_sbi_shutdown();
++err_free_info:
++	dma_free_coherent(cryp->dev, sizeof(struct mchp_crypto_info),
++			  crypto_info, dma_addr_crypto);
++	return ret;
++}
++
++static int mchp_crypto_remove(struct platform_device *pdev)
++{
++	struct mchp_crypto_dev *cryp = platform_get_drvdata(pdev);
++	/* Disable crypto clock */
++	mchp_crypto_sbi_shutdown();
++
++	if (cryp->crypto->services & CRYPTO_SERVICE_AES)
++		mchp_aes_unregister_algs(cryp);
++
++	crypto_engine_stop(cryp->engine);
++	crypto_engine_exit(cryp->engine);
++
++	spin_lock(&dev_list.lock);
++	list_del(&cryp->list);
++	spin_unlock(&dev_list.lock);
++
++	dma_free_coherent(cryp->dev, sizeof(struct mchp_crypto_info),
++			  crypto_info, dma_addr_crypto);
++	return 0;
++}
++
++static const struct of_device_id mchp_crypto_dt_ids[] = {
++	{ .compatible = "microchip,mpfs-crypto", },
++	{}
++};
++MODULE_DEVICE_TABLE(of, mchp_crypto_dt_ids);
++
++static struct platform_driver mchp_crypto_driver = {
++	.driver = {
++		.name = "microchip-crypto",
++		.of_match_table = mchp_crypto_dt_ids,
++	},
++	.probe = mchp_crypto_probe,
++	.remove = mchp_crypto_remove,
++};
++module_platform_driver(mchp_crypto_driver);
++
++MODULE_AUTHOR("Padmarao Begari <padmarao.begari@microchip.com>");
++MODULE_DESCRIPTION("Microchip PolarFire SoC User Crypto driver");
++MODULE_LICENSE("GPL");
+diff -urN '--label=/dev/null' /dev/null linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi.h
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/crypto/microchip/mchp-crypto-sbi.h	2024-12-04 16:41:21.844285700 +0900
+@@ -0,0 +1,90 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Microchip PolarFire SoC (MPFS) User Crypto driver
++ *
++ * Copyright (c) 2023 Microchip Corporation. All rights reserved.
++ *
++ * Author: Padmarao Begari <padmarao.begari@microchip.com>
++ *
++ */
++
++#include <asm/sbi.h>
++#include <asm/vendorid_list.h>
++#include <crypto/aes.h>
++#include <linux/bits.h>
++
++#define SBI_EXT_MICROCHIP_TECHNOLOGY		(SBI_EXT_VENDOR_START | \
++						 MICROCHIP_VENDOR_ID)
++
++#define MICROCHIP_SBI_EXT_CRYPTO_INIT			0x11
++#define MICROCHIP_SBI_EXT_CRYPTO_SERVICES_PROBE		0x12
++#define MICROCHIP_SBI_EXT_CRYPTO_SERVICES		0x13
++
++struct mchp_crypto_info {
++	u32 services;
++#define CRYPTO_SERVICE_AES		BIT(0)
++#define CRYPTO_SERVICE_AEAD		BIT(1)
++#define CRYPTO_SERVICE_HASH		BIT(2)
++#define CRYPTO_SERVICE_MAC		BIT(3)
++#define CRYPTO_SERVICE_RSA		BIT(4)
++#define CRYPTO_SERVICE_DSA		BIT(5)
++#define CRYPTO_SERVICE_ECDSA		BIT(6)
++#define CRYPTO_SERVICE_NRBG		BIT(7)
++	u64 cipher_algo;
++#define CRYPTO_ALG_AES_ECB		BIT(0)
++#define CRYPTO_ALG_AES_CBC		BIT(1)
++#define CRYPTO_ALG_AES_OFB		BIT(2)
++#define CRYPTO_ALG_AES_CFB		BIT(3)
++#define CRYPTO_ALG_AES_CTR		BIT(4)
++	u32 aead_algo;
++#define CRYPTO_ALG_AEAD_GCM		BIT(0)
++#define CRYPTO_ALG_AEAD_CCM		BIT(1)
++	u32 hash_algo;
++#define CRYPTO_ALG_HASH_SHA1		BIT(0)
++#define CRYPTO_ALG_HASH_SHA224		BIT(1)
++#define CRYPTO_ALG_HASH_SHA256		BIT(2)
++#define CRYPTO_ALG_HASH_SHA384		BIT(3)
++#define CRYPTO_ALG_HASH_SHA512		BIT(4)
++#define CRYPTO_ALG_HASH_SHA512_224	BIT(5)
++#define CRYPTO_ALG_HASH_SHA512_256	BIT(6)
++	u64 mac_algo;
++#define CRYPTO_ALG_MAC_SHA1		BIT(0)
++#define CRYPTO_ALG_MAC_SHA224		BIT(1)
++#define CRYPTO_ALG_MAC_SHA256		BIT(2)
++#define CRYPTO_ALG_MAC_SHA384		BIT(3)
++#define CRYPTO_ALG_MAC_SHA512		BIT(4)
++#define CRYPTO_ALG_MAC_SHA512_224	BIT(5)
++#define CRYPTO_ALG_MAC_SHA512_256	BIT(6)
++#define CRYPTO_ALG_MAC_AESCMAC128	BIT(10)
++#define CRYPTO_ALG_MAC_AESCMAC192	BIT(11)
++#define CRYPTO_ALG_MAC_AESCMAC256	BIT(12)
++#define CRYPTO_ALG_MAC_AESGMAC		BIT(13)
++	u64 akcipher_algo;
++#define CRYPTO_ALG_DSA			BIT(0)
++#define CRYPTO_ALG_RSA			BIT(1)
++#define CRYPTO_ALG_DH			BIT(2)
++#define CRYPTO_ALG_ECDSA		BIT(3)
++#define CRYPTO_ALG_ECDH			BIT(4)
++	u32 nrbg_algo;
++};
++
++struct mchp_crypto_ctx {
++	struct mchp_crypto_dev		*cryp;
++	u8				key[AES_MAX_KEY_SIZE];
++	int				keylen;
++	unsigned long			flags;
++};
++
++struct mchp_crypto_dev {
++	struct list_head		list;
++	struct device			*dev;
++	struct crypto_engine		*engine;
++	struct mchp_crypto_info		*crypto;
++};
++
++struct mchp_crypto_dev *mchp_crypto_find_dev(struct mchp_crypto_ctx *ctx);
++
++int mchp_crypto_sbi_services(u32 service, u64 crypto_addr, u32 flags);
++
++int mchp_aes_register_algs(struct mchp_crypto_dev *cryp);
++void mchp_aes_unregister_algs(struct mchp_crypto_dev *cryp);

@@ -1,0 +1,494 @@
+--- linux-6.6.51/Documentation/devicetree/bindings/mfd/atmel-hlcdc.txt	2024-12-05 13:07:31.090072500 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/mfd/atmel-hlcdc.txt	2024-12-04 16:41:10.310120500 +0900
+@@ -11,7 +11,7 @@
+    "microchip,sam9x75-xlcdc"
+  - reg: base address and size of the HLCDC device registers.
+  - clock-names: the name of the 3 clocks requested by the HLCDC device.
+-   Should contain "periph_clk", "sys_clk" and "slow_clk".
++   Should contain "periph_clk", "sys_clk" or "lvds_pll_clk" and "slow_clk".
+  - clocks: should contain the 3 clocks requested by the HLCDC device.
+  - interrupts: should contain the description of the HLCDC interrupt line
+ 
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/mfd/raspberrypi,sensehat.yaml	2024-12-04 16:41:10.336051100 +0900
+@@ -0,0 +1,57 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/mfd/raspberrypi,sensehat.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Raspberry Pi Sensehat
++
++maintainers:
++  - Charles Mirabile <cmirabil@redhat.com>
++  - Joel Savitz <jsavitz@redhat.com>
++
++description:
++  The Raspberry Pi Sensehat is an addon board originally developed
++  for the Raspberry Pi that has a joystick and an 8x8 RGB LED display
++  as well as several environmental sensors. It connects via i2c and
++  a gpio for irq.
++
++properties:
++  compatible:
++    const: raspberrypi,sensehat
++
++  reg:
++    maxItems: 1
++
++  joystick:
++    $ref: /schemas/input/raspberrypi,sensehat-joystick.yaml#
++
++  display:
++    $ref: /schemas/auxdisplay/raspberrypi,sensehat-display.yaml#
++
++required:
++  - compatible
++  - reg
++  - joystick
++  - display
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/irq.h>
++    i2c {
++      #address-cells = <1>;
++      #size-cells = <0>;
++      hat@46 {
++        compatible = "raspberrypi,sensehat";
++        reg = <0x46>;
++        display {
++          compatible = "raspberrypi,sensehat-display";
++        };
++        joystick {
++          compatible = "raspberrypi,sensehat-joystick";
++          interrupts = <23 IRQ_TYPE_EDGE_RISING>;
++        };
++      };
++    };
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/mfd/syscon-smc.yaml	2024-12-04 16:41:10.349016500 +0900
+@@ -0,0 +1,57 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/mfd/syscon-smc.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: System Controller Registers R/W via SMC Device Tree Bindings
++
++description: |
++  System controller SMC node represents a register region containing a set
++  of miscellaneous registers accessed through a secure monitor.
++  The typical use-case is the same as the syscon one but when running with a
++  secure monitor.
++
++maintainers:
++  - Lee Jones <lee.jones@linaro.org>
++
++properties:
++  compatible:
++    anyOf:
++      - items:
++          - enum:
++              - atmel,sama5d2-sfr
++
++          - const: syscon-smc
++
++      - contains:
++          const: syscon-smc
++        minItems: 2
++        maxItems: 4  # Should be enough
++
++  arm,smc-id:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    description: |
++      The ATF smc function id used by the firmware.
++
++  reg-io-width:
++    description: |
++      The size (in bytes) of the IO accesses that should be performed
++      on the device.
++    $ref: /schemas/types.yaml#/definitions/uint32
++    enum: [1, 2, 4, 8]
++
++required:
++  - compatible
++  - arm,smc-id
++
++additionalProperties: false
++
++examples:
++  - |
++    sfr {
++        compatible = "atmel,sama5d2-sfr", "syscon-smc";
++        arm,smc-id = <0x02000300>;
++    };
++
++...
+--- linux-6.6.51/Documentation/devicetree/bindings/mfd/syscon.yaml	2024-12-05 13:07:31.122984500 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/mfd/syscon.yaml	2024-12-04 16:41:10.349016500 +0900
+@@ -25,7 +25,6 @@
+       contains:
+         enum:
+           - syscon
+-
+   required:
+     - compatible
+ 
+@@ -53,6 +52,8 @@
+               - mediatek,mt8135-pctl-a-syscfg
+               - mediatek,mt8135-pctl-b-syscfg
+               - mediatek,mt8365-syscfg
++              - microchip,mpfs-sysreg-scb
++              - microchip,pic64gx-sysreg-scb
+               - microchip,lan966x-cpu-syscon
+               - microchip,sparx5-cpu-syscon
+               - mstar,msc313-pmsleep
+--- linux-6.6.51/drivers/mfd/atmel-hlcdc.c	2024-12-05 13:07:48.518954400 +0900
++++ linux4microchip-fpga-2024.09/drivers/mfd/atmel-hlcdc.c	2024-12-04 16:41:28.691205700 +0900
+@@ -45,7 +45,7 @@
+ 		ret = readl_poll_timeout_atomic(hregmap->regs + ATMEL_HLCDC_SR,
+ 						status,
+ 						!(status & ATMEL_HLCDC_SIP),
+-						1, 100);
++						1, 400);
+ 		if (ret) {
+ 			dev_err(hregmap->dev,
+ 				"Timeout! Clock domain synchronization is in progress!\n");
+@@ -108,10 +108,22 @@
+ 		return PTR_ERR(hlcdc->periph_clk);
+ 	}
+ 
++	/*
++	 * Obtain one of the essential clocks (GCK / LVDS PLL) necessary for
++	 * the LCD to function. GCK for PDA and MIPI Display, LVDS PLL for LVDS
++	 * Display. DT is expected to have any one of the clocks, not both.
++	 */
++	hlcdc->sys_clk = NULL;
++	hlcdc->lvds_pll_clk = NULL;
+ 	hlcdc->sys_clk = devm_clk_get(dev, "sys_clk");
+ 	if (IS_ERR(hlcdc->sys_clk)) {
+-		dev_err(dev, "failed to get system clock\n");
+-		return PTR_ERR(hlcdc->sys_clk);
++		dev_dbg(dev, "failed to get sys_clk\n");
++               hlcdc->sys_clk = NULL;
++		hlcdc->lvds_pll_clk = devm_clk_get(dev, "lvds_pll_clk");
++		if (IS_ERR(hlcdc->lvds_pll_clk)) {
++			dev_err(dev, "failed to get GCK and LVDS_PLL\n");
++			return PTR_ERR(hlcdc->lvds_pll_clk);
++		}
+ 	}
+ 
+ 	hlcdc->slow_clk = devm_clk_get(dev, "slow_clk");
+@@ -139,6 +151,8 @@
+ 	{ .compatible = "atmel,sama5d3-hlcdc" },
+ 	{ .compatible = "atmel,sama5d4-hlcdc" },
+ 	{ .compatible = "microchip,sam9x60-hlcdc" },
++	{ .compatible = "microchip,sam9x75-xlcdc" },
++	{ .compatible = "microchip,sama7d65-xlcdc" },
+ 	{ /* sentinel */ },
+ };
+ MODULE_DEVICE_TABLE(of, atmel_hlcdc_match);
+--- linux-6.6.51/drivers/mfd/simple-mfd-i2c.c	2024-12-05 13:07:48.573807600 +0900
++++ linux4microchip-fpga-2024.09/drivers/mfd/simple-mfd-i2c.c	2024-12-04 16:41:28.746058900 +0900
+@@ -88,6 +88,7 @@
+ 	{ .compatible = "silergy,sy7636a", .data = &silergy_sy7636a},
+ 	{ .compatible = "maxim,max5970", .data = &maxim_max5970},
+ 	{ .compatible = "maxim,max5978", .data = &maxim_max5970},
++	{ .compatible = "raspberrypi,sensehat" },
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, simple_mfd_i2c_of_match);
+--- linux-6.6.51/drivers/mfd/syscon.c	2024-12-05 13:07:48.580788900 +0900
++++ linux4microchip-fpga-2024.09/drivers/mfd/syscon.c	2024-12-04 16:41:28.753040200 +0900
+@@ -42,7 +42,15 @@
+ 	.reg_stride = 4,
+ };
+ 
+-static struct syscon *of_syscon_register(struct device_node *np, bool check_res)
++static void syscon_add(struct syscon *syscon)
++{
++	spin_lock(&syscon_list_slock);
++	list_add_tail(&syscon->list, &syscon_list);
++	spin_unlock(&syscon_list_slock);
++}
++
++static struct syscon *of_syscon_register_mmio(struct device_node *np,
++					      bool check_res)
+ {
+ 	struct clk *clk;
+ 	struct syscon *syscon;
+@@ -148,10 +156,6 @@
+ 	syscon->regmap = regmap;
+ 	syscon->np = np;
+ 
+-	spin_lock(&syscon_list_slock);
+-	list_add_tail(&syscon->list, &syscon_list);
+-	spin_unlock(&syscon_list_slock);
+-
+ 	return syscon;
+ 
+ err_reset:
+@@ -168,8 +172,49 @@
+ 	return ERR_PTR(ret);
+ }
+ 
++#ifdef CONFIG_REGMAP_SMCCC
++static struct syscon *of_syscon_register_smccc(struct device_node *np)
++{
++	struct syscon *syscon;
++	struct regmap *regmap;
++	u32 reg_io_width = 4, smc_id;
++	int ret;
++	struct regmap_config syscon_config = syscon_regmap_config;
++
++	ret = of_property_read_u32(np, "arm,smc-id", &smc_id);
++	if (ret)
++		return ERR_PTR(-ENODEV);
++
++	syscon = kzalloc(sizeof(*syscon), GFP_KERNEL);
++	if (!syscon)
++		return ERR_PTR(-ENOMEM);
++
++	of_property_read_u32(np, "reg-io-width", &reg_io_width);
++
++	syscon_config.name = kasprintf(GFP_KERNEL, "%pOFn@smc%x", np, smc_id);
++	syscon_config.val_bits = reg_io_width * 8;
++
++	regmap = regmap_init_smccc(NULL, smc_id, &syscon_config);
++	if (IS_ERR(regmap)) {
++		ret = PTR_ERR(regmap);
++		goto err_regmap;
++	}
++
++	syscon->regmap = regmap;
++	syscon->np = np;
++
++	return syscon;
++
++err_regmap:
++	kfree(syscon_config.name);
++	kfree(syscon);
++
++	return ERR_PTR(ret);
++}
++#endif
++
+ static struct regmap *device_node_get_regmap(struct device_node *np,
+-					     bool check_res)
++					     bool check_clk, bool use_smccc)
+ {
+ 	struct syscon *entry, *syscon = NULL;
+ 
+@@ -183,8 +228,19 @@
+ 
+ 	spin_unlock(&syscon_list_slock);
+ 
+-	if (!syscon)
+-		syscon = of_syscon_register(np, check_res);
++	if (!syscon) {
++		if (use_smccc)
++#ifdef CONFIG_REGMAP_SMCCC
++			syscon = of_syscon_register_smccc(np);
++#else
++			syscon = NULL;
++#endif
++		else
++			syscon = of_syscon_register_mmio(np, check_clk);
++
++		if (!IS_ERR(syscon))
++			syscon_add(syscon);
++	}
+ 
+ 	if (IS_ERR(syscon))
+ 		return ERR_CAST(syscon);
+@@ -194,16 +250,19 @@
+ 
+ struct regmap *device_node_to_regmap(struct device_node *np)
+ {
+-	return device_node_get_regmap(np, false);
++	return device_node_get_regmap(np, false, false);
+ }
+ EXPORT_SYMBOL_GPL(device_node_to_regmap);
+ 
+ struct regmap *syscon_node_to_regmap(struct device_node *np)
+ {
+-	if (!of_device_is_compatible(np, "syscon"))
+-		return ERR_PTR(-EINVAL);
++	if (of_device_is_compatible(np, "syscon"))
++		return device_node_get_regmap(np, true, false);
++
++	if (of_device_is_compatible(np, "syscon-smc"))
++		return device_node_get_regmap(np, true, true);
+ 
+-	return device_node_get_regmap(np, true);
++	return ERR_PTR(-EINVAL);
+ }
+ EXPORT_SYMBOL_GPL(syscon_node_to_regmap);
+ 
+@@ -293,19 +352,19 @@
+ }
+ EXPORT_SYMBOL_GPL(syscon_regmap_lookup_by_phandle_optional);
+ 
+-static int syscon_probe(struct platform_device *pdev)
++struct syscon_driver_data {
++	int (*probe_func)(struct platform_device *pdev, struct device *dev,
++			  struct syscon *syscon);
++};
++
++static int syscon_probe_mmio(struct platform_device *pdev,
++			     struct device *dev,
++			     struct syscon *syscon)
+ {
+-	struct device *dev = &pdev->dev;
+-	struct syscon_platform_data *pdata = dev_get_platdata(dev);
+-	struct syscon *syscon;
+ 	struct regmap_config syscon_config = syscon_regmap_config;
+ 	struct resource *res;
+ 	void __iomem *base;
+ 
+-	syscon = devm_kzalloc(dev, sizeof(*syscon), GFP_KERNEL);
+-	if (!syscon)
+-		return -ENOMEM;
+-
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res)
+ 		return -ENOENT;
+@@ -315,23 +374,84 @@
+ 		return -ENOMEM;
+ 
+ 	syscon_config.max_register = resource_size(res) - 4;
+-	if (pdata)
+-		syscon_config.name = pdata->label;
++
+ 	syscon->regmap = devm_regmap_init_mmio(dev, base, &syscon_config);
+ 	if (IS_ERR(syscon->regmap)) {
+ 		dev_err(dev, "regmap init failed\n");
+ 		return PTR_ERR(syscon->regmap);
+ 	}
+ 
+-	platform_set_drvdata(pdev, syscon);
++	dev_dbg(dev, "regmap_mmio %pR registered\n", res);
++
++	return 0;
++}
++
++static const struct syscon_driver_data syscon_mmio_data = {
++	.probe_func = &syscon_probe_mmio,
++};
++
++#ifdef CONFIG_REGMAP_SMCCC
++
++static int syscon_probe_smc(struct platform_device *pdev,
++			    struct device *dev,
++			    struct syscon *syscon)
++{
++	struct regmap_config syscon_config = syscon_regmap_config;
++	int smc_id, ret;
++
++	ret = of_property_read_u32(dev->of_node, "arm,smc-id", &smc_id);
++	if (!ret)
++		return -ENODEV;
++
++	syscon->regmap = devm_regmap_init_smccc(dev, smc_id, &syscon_config);
++	if (IS_ERR(syscon->regmap)) {
++		dev_err(dev, "regmap init failed\n");
++		return PTR_ERR(syscon->regmap);
++	}
+ 
+-	dev_dbg(dev, "regmap %pR registered\n", res);
++	dev_dbg(dev, "regmap_smccc %x registered\n", smc_id);
++
++	return 0;
++}
++
++static const struct syscon_driver_data syscon_smc_data = {
++	.probe_func = &syscon_probe_smc,
++};
++#endif
++
++static int syscon_probe(struct platform_device *pdev)
++{
++	int ret;
++	struct device *dev = &pdev->dev;
++	struct syscon_platform_data *pdata = dev_get_platdata(dev);
++	struct regmap_config syscon_config = syscon_regmap_config;
++	struct syscon *syscon;
++	const struct syscon_driver_data *driver_data;
++
++	if (pdata)
++		syscon_config.name = pdata->label;
++
++	syscon = devm_kzalloc(dev, sizeof(*syscon), GFP_KERNEL);
++	if (!syscon)
++		return -ENOMEM;
++
++	driver_data = (const struct syscon_driver_data *)
++				platform_get_device_id(pdev)->driver_data;
++
++	ret = driver_data->probe_func(pdev, dev, syscon);
++	if (ret)
++		return ret;
++
++	platform_set_drvdata(pdev, syscon);
+ 
+ 	return 0;
+ }
+ 
+ static const struct platform_device_id syscon_ids[] = {
+-	{ "syscon", },
++	{ .name = "syscon",	.driver_data = (kernel_ulong_t)&syscon_mmio_data},
++#ifdef CONFIG_REGMAP_SMCCC
++	{ .name = "syscon-smc",	.driver_data = (kernel_ulong_t)&syscon_smc_data},
++#endif
+ 	{ }
+ };
+ 
+--- linux-6.6.51/include/linux/mfd/atmel-hlcdc.h	2024-12-05 13:07:57.260567500 +0900
++++ linux4microchip-fpga-2024.09/include/linux/mfd/atmel-hlcdc.h	2024-12-04 16:41:37.582418200 +0900
+@@ -22,6 +22,8 @@
+ #define ATMEL_HLCDC_DITHER		BIT(6)
+ #define ATMEL_HLCDC_DISPDLY		BIT(7)
+ #define ATMEL_HLCDC_MODE_MASK		GENMASK(9, 8)
++#define ATMEL_XLCDC_MODE_MASK		GENMASK(10, 8)
++#define ATMEL_XLCDC_DPI			BIT(11)
+ #define ATMEL_HLCDC_PP			BIT(10)
+ #define ATMEL_HLCDC_VSPSU		BIT(12)
+ #define ATMEL_HLCDC_VSPHO		BIT(13)
+@@ -34,8 +36,15 @@
+ #define ATMEL_HLCDC_IDR			0x30
+ #define ATMEL_HLCDC_IMR			0x34
+ #define ATMEL_HLCDC_ISR			0x38
++#define ATMEL_XLCDC_ATTRE		0x3c
++
++#define ATMEL_XLCDC_BASE_UPDATE		BIT(0)
++#define ATMEL_XLCDC_OVR1_UPDATE		BIT(1)
++#define ATMEL_XLCDC_OVR3_UPDATE		BIT(2)
++#define ATMEL_XLCDC_HEO_UPDATE		BIT(3)
+ 
+ #define ATMEL_HLCDC_CLKPOL		BIT(0)
++#define ATMEL_XLCDC_CLKBYP		BIT(1)
+ #define ATMEL_HLCDC_CLKSEL		BIT(2)
+ #define ATMEL_HLCDC_CLKPWMSEL		BIT(3)
+ #define ATMEL_HLCDC_CGDIS(i)		BIT(8 + (i))
+@@ -48,6 +57,8 @@
+ #define ATMEL_HLCDC_DISP		BIT(2)
+ #define ATMEL_HLCDC_PWM			BIT(3)
+ #define ATMEL_HLCDC_SIP			BIT(4)
++#define ATMEL_XLCDC_SD			BIT(5)
++#define ATMEL_XLCDC_CM			BIT(6)
+ 
+ #define ATMEL_HLCDC_SOF			BIT(0)
+ #define ATMEL_HLCDC_SYNCDIS		BIT(1)
+@@ -65,6 +76,7 @@
+  */
+ struct atmel_hlcdc {
+ 	struct regmap *regmap;
++	struct clk *lvds_pll_clk;
+ 	struct clk *periph_clk;
+ 	struct clk *sys_clk;
+ 	struct clk *slow_clk;

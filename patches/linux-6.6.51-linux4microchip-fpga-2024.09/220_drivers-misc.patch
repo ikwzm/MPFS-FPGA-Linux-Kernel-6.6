@@ -1,0 +1,671 @@
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/misc/microchip,mpfs-dma-proxy.yaml	2024-12-04 16:41:10.374947000 +0900
+@@ -0,0 +1,45 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/misc/microchip,mpfs-dma-proxy.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Microchip PolarFire SoC DMA proxy
++
++description:
++  Userspace DMA interface, Exposing the platform DMA on PolarFire SoC
++
++maintainers:
++  - Shravan Chippa <shravan.chippa@microchip.com>
++
++properties:
++  compatible:
++    const: microchip,mpfs-dma-proxy
++
++  dmas:
++    minItems: 1
++    maxItems: 4
++
++  dma-names:
++    items:
++      - const: dma-proxy0
++      - const: dma-proxy1
++      - const: dma-proxy2
++      - const: dma-proxy3
++    minItems: 1
++
++required:
++  - compatible
++  - dmas
++  - dma-names
++
++additionalProperties: false
++
++examples:
++  - |
++
++    mpfs_dma_proxy: mpfs-dma-proxy {
++        compatible = "microchip,mpfs-dma-proxy";
++        dmas = <&pdma 3>;
++        dma-names = "dma-proxy0";
++    };
+--- linux-6.6.51/drivers/misc/Kconfig	2024-12-05 13:07:48.608714300 +0900
++++ linux4microchip-fpga-2024.09/drivers/misc/Kconfig	2024-12-04 16:41:28.781962900 +0900
+@@ -253,6 +253,14 @@
+ 	  This driver provides IRQ handling for Hi6421v600, used on
+ 	  some Kirin chipsets, like the one at Hikey 970.
+ 
++config MPFS_DMA_PROXY
++	tristate "Microchip dma proxy driver"
++	depends on OF
++	help
++	  This driver will give DMA interface to userspace
++	  user can configure src, dst and size to initiate transfer
++	  proxy dma driver will use platform dma
++
+ config HP_ILO
+ 	tristate "Channel interface driver for the HP iLO processor"
+ 	depends on PCI
+--- linux-6.6.51/drivers/misc/Makefile	2024-12-05 13:07:48.608714300 +0900
++++ linux4microchip-fpga-2024.09/drivers/misc/Makefile	2024-12-04 16:41:28.781962900 +0900
+@@ -67,3 +67,4 @@
+ obj-$(CONFIG_TMR_INJECT)	+= xilinx_tmr_inject.o
+ obj-$(CONFIG_TPS6594_ESM)	+= tps6594-esm.o
+ obj-$(CONFIG_TPS6594_PFSM)	+= tps6594-pfsm.o
++obj-$(CONFIG_MPFS_DMA_PROXY)	+= mpfs-dma-proxy.o
+--- linux-6.6.51/drivers/misc/eeprom/at24.c	2024-12-05 13:07:48.641626200 +0900
++++ linux4microchip-fpga-2024.09/drivers/misc/eeprom/at24.c	2024-12-04 16:41:28.813877500 +0900
+@@ -120,17 +120,19 @@
+ 	u32 byte_len;
+ 	u8 flags;
+ 	u8 bank_addr_shift;
++	u8 adjoff;
+ 	void (*read_post)(unsigned int off, char *buf, size_t count);
+ };
+ 
+-#define AT24_CHIP_DATA(_name, _len, _flags)				\
++#define AT24_CHIP_DATA(_name, _len, _flags, _adjoff)			\
+ 	static const struct at24_chip_data _name = {			\
+-		.byte_len = _len, .flags = _flags,			\
++		.byte_len = _len, .flags = _flags, .adjoff = _adjoff, \
+ 	}
+ 
+-#define AT24_CHIP_DATA_CB(_name, _len, _flags, _read_post)		\
++#define AT24_CHIP_DATA_CB(_name, _len, _flags, _adjoff, _read_post)	\
+ 	static const struct at24_chip_data _name = {			\
+ 		.byte_len = _len, .flags = _flags,			\
++		.adjoff = _adjoff,					\
+ 		.read_post = _read_post,				\
+ 	}
+ 
+@@ -161,49 +163,53 @@
+ }
+ 
+ /* needs 8 addresses as A0-A2 are ignored */
+-AT24_CHIP_DATA(at24_data_24c00, 128 / 8, AT24_FLAG_TAKE8ADDR);
++AT24_CHIP_DATA(at24_data_24c00, 128 / 8, AT24_FLAG_TAKE8ADDR, 0);
+ /* old variants can't be handled with this generic entry! */
+-AT24_CHIP_DATA(at24_data_24c01, 1024 / 8, 0);
++AT24_CHIP_DATA(at24_data_24c01, 1024 / 8, 0, 0);
+ AT24_CHIP_DATA(at24_data_24cs01, 16,
+-	AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
+-AT24_CHIP_DATA(at24_data_24c02, 2048 / 8, 0);
++	AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24c02, 2048 / 8, 0, 0);
+ AT24_CHIP_DATA(at24_data_24cs02, 16,
+-	AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
++	AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
+ AT24_CHIP_DATA(at24_data_24mac402, 48 / 8,
+-	AT24_FLAG_MAC | AT24_FLAG_READONLY);
++	AT24_FLAG_MAC | AT24_FLAG_READONLY, 1);
+ AT24_CHIP_DATA(at24_data_24mac602, 64 / 8,
+-	AT24_FLAG_MAC | AT24_FLAG_READONLY);
++	AT24_FLAG_MAC | AT24_FLAG_READONLY, 1);
++AT24_CHIP_DATA(at24_data_24mac02e4, 48 / 8,
++	AT24_FLAG_MAC | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24mac02e6, 64 / 8,
++	AT24_FLAG_MAC | AT24_FLAG_READONLY, 0);
+ /* spd is a 24c02 in memory DIMMs */
+ AT24_CHIP_DATA(at24_data_spd, 2048 / 8,
+-	AT24_FLAG_READONLY | AT24_FLAG_IRUGO);
++	AT24_FLAG_READONLY | AT24_FLAG_IRUGO, 0);
+ /* 24c02_vaio is a 24c02 on some Sony laptops */
+ AT24_CHIP_DATA_CB(at24_data_24c02_vaio, 2048 / 8,
+-	AT24_FLAG_READONLY | AT24_FLAG_IRUGO,
++	AT24_FLAG_READONLY | AT24_FLAG_IRUGO, 0,
+ 	at24_read_post_vaio);
+-AT24_CHIP_DATA(at24_data_24c04, 4096 / 8, 0);
++AT24_CHIP_DATA(at24_data_24c04, 4096 / 8, 0, 0);
+ AT24_CHIP_DATA(at24_data_24cs04, 16,
+-	AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
++	AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
+ /* 24rf08 quirk is handled at i2c-core */
+-AT24_CHIP_DATA(at24_data_24c08, 8192 / 8, 0);
++AT24_CHIP_DATA(at24_data_24c08, 8192 / 8, 0, 0);
+ AT24_CHIP_DATA(at24_data_24cs08, 16,
+-	AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
+-AT24_CHIP_DATA(at24_data_24c16, 16384 / 8, 0);
++	AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24c16, 16384 / 8, 0, 0);
+ AT24_CHIP_DATA(at24_data_24cs16, 16,
+-	AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
+-AT24_CHIP_DATA(at24_data_24c32, 32768 / 8, AT24_FLAG_ADDR16);
++	AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24c32, 32768 / 8, AT24_FLAG_ADDR16, 0);
+ AT24_CHIP_DATA(at24_data_24cs32, 16,
+-	AT24_FLAG_ADDR16 | AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
+-AT24_CHIP_DATA(at24_data_24c64, 65536 / 8, AT24_FLAG_ADDR16);
++	AT24_FLAG_ADDR16 | AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24c64, 65536 / 8, AT24_FLAG_ADDR16, 0);
+ AT24_CHIP_DATA(at24_data_24cs64, 16,
+-	AT24_FLAG_ADDR16 | AT24_FLAG_SERIAL | AT24_FLAG_READONLY);
+-AT24_CHIP_DATA(at24_data_24c128, 131072 / 8, AT24_FLAG_ADDR16);
+-AT24_CHIP_DATA(at24_data_24c256, 262144 / 8, AT24_FLAG_ADDR16);
+-AT24_CHIP_DATA(at24_data_24c512, 524288 / 8, AT24_FLAG_ADDR16);
+-AT24_CHIP_DATA(at24_data_24c1024, 1048576 / 8, AT24_FLAG_ADDR16);
++	AT24_FLAG_ADDR16 | AT24_FLAG_SERIAL | AT24_FLAG_READONLY, 0);
++AT24_CHIP_DATA(at24_data_24c128, 131072 / 8, AT24_FLAG_ADDR16, 0);
++AT24_CHIP_DATA(at24_data_24c256, 262144 / 8, AT24_FLAG_ADDR16, 0);
++AT24_CHIP_DATA(at24_data_24c512, 524288 / 8, AT24_FLAG_ADDR16, 0);
++AT24_CHIP_DATA(at24_data_24c1024, 1048576 / 8, AT24_FLAG_ADDR16, 0);
++AT24_CHIP_DATA(at24_data_24c2048, 2097152 / 8, AT24_FLAG_ADDR16, 0);
+ AT24_CHIP_DATA_BS(at24_data_24c1025, 1048576 / 8, AT24_FLAG_ADDR16, 2);
+-AT24_CHIP_DATA(at24_data_24c2048, 2097152 / 8, AT24_FLAG_ADDR16);
+ /* identical to 24c08 ? */
+-AT24_CHIP_DATA(at24_data_INT3499, 8192 / 8, 0);
++AT24_CHIP_DATA(at24_data_INT3499, 8192 / 8, 0, 0);
+ 
+ static const struct i2c_device_id at24_ids[] = {
+ 	{ "24c00",	(kernel_ulong_t)&at24_data_24c00 },
+@@ -212,7 +218,9 @@
+ 	{ "24c02",	(kernel_ulong_t)&at24_data_24c02 },
+ 	{ "24cs02",	(kernel_ulong_t)&at24_data_24cs02 },
+ 	{ "24mac402",	(kernel_ulong_t)&at24_data_24mac402 },
++	{ "24mac02e4",	(kernel_ulong_t)&at24_data_24mac02e4 },
+ 	{ "24mac602",	(kernel_ulong_t)&at24_data_24mac602 },
++	{ "24mac02e6",	(kernel_ulong_t)&at24_data_24mac02e6 },
+ 	{ "spd",	(kernel_ulong_t)&at24_data_spd },
+ 	{ "24c02-vaio",	(kernel_ulong_t)&at24_data_24c02_vaio },
+ 	{ "24c04",	(kernel_ulong_t)&at24_data_24c04 },
+@@ -243,7 +251,9 @@
+ 	{ .compatible = "atmel,24c02",		.data = &at24_data_24c02 },
+ 	{ .compatible = "atmel,24cs02",		.data = &at24_data_24cs02 },
+ 	{ .compatible = "atmel,24mac402",	.data = &at24_data_24mac402 },
++	{ .compatible = "atmel,24mac02e4",	.data = &at24_data_24mac02e4 },
+ 	{ .compatible = "atmel,24mac602",	.data = &at24_data_24mac602 },
++	{ .compatible = "atmel,24mac02e6",	.data = &at24_data_24mac02e6 },
+ 	{ .compatible = "atmel,spd",		.data = &at24_data_spd },
+ 	{ .compatible = "atmel,24c04",		.data = &at24_data_24c04 },
+ 	{ .compatible = "atmel,24cs04",		.data = &at24_data_24cs04 },
+@@ -713,7 +723,8 @@
+ 	at24->read_post = cdata->read_post;
+ 	at24->bank_addr_shift = cdata->bank_addr_shift;
+ 	at24->num_addresses = num_addresses;
+-	at24->offset_adj = at24_get_offset_adj(flags, byte_len);
++	at24->offset_adj = cdata->adjoff ?
++				at24_get_offset_adj(flags, byte_len) : 0;
+ 	at24->client_regmaps[0] = regmap;
+ 
+ 	at24->vcc_reg = devm_regulator_get(dev, "vcc");
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/misc/mpfs-dma-proxy.c	2024-12-04 16:41:28.861749500 +0900
+@@ -0,0 +1,417 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Microchip PolarFire SoC DMA proxy driver
++ *
++ * Copyright (C) 2022 Microchip Technology Inc. and its subsidiaries
++ *
++ * Author: Shravan Chippa <shravan.chippa@microchip.com>
++ *
++ * Driver based on Xilinx DMA proxy driver
++ */
++
++#include <linux/cdev.h>
++#include <linux/dmaengine.h>
++#include <linux/dma-mapping.h>
++#include <linux/device.h>
++#include <linux/fs.h>
++#include <linux/ioctl.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/of_dma.h>
++#include <linux/platform_device.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/version.h>
++#include <uapi/misc/mpfs-dma-proxy.h>
++
++#define MPFS_DMA_PROXY_DRIVER_NAME		"mpfs_dma_proxy"
++#define MPFS_DMA_PROXY_XFER_TIMEOUT_M_SEC	3000
++#define MPFS_DMA_PROXY_MAXBURST_SIZE		8
++
++/**
++ * struct mpfs_dma_proxy_channel -  one channel resource
++ * @channel_config:	dma config data pointer
++ * @proxy_device:	device struct proxy dma
++ * @dma_device:		device struct dma
++ * @class:		struct class proxy dma
++ * @channel:		dma chan pointer
++ * @cdev:		struct cdev for char device
++ * @proxy_status:	status of dma xfer
++ * @complete:		struct completion
++ * @cookie:		transaction cookie
++ * @dev:		device node
++ */
++struct mpfs_dma_proxy_channel {
++	struct mpfs_dma_proxy_channel_config *channel_config;
++	struct device *proxy_device;
++	struct device *dma_device;
++	struct class *class;
++	struct dma_chan *channel;
++	struct cdev cdev;
++	enum mpfs_dma_proxy_status proxy_status;
++	struct completion complete;
++	dma_cookie_t cookie;
++	dev_t dev;
++};
++
++/**
++ * struct mpfs_dma_proxy - dma proxy platform data for all channels
++ * @channels:		pointer for all channels
++ * @names:		array of channel names
++ * @channel_count:	channel count
++ * @active_channels:	active channel counter for cleanup class
++ */
++struct mpfs_dma_proxy {
++	struct mpfs_dma_proxy_channel *channels;
++	char **names;
++	int channel_count;
++	int active_channels;
++};
++
++static void mpfs_dma_proxy_sync_callback(void *done)
++{
++	complete(done);
++}
++
++static int mpfs_dma_proxy_start_transfer(struct mpfs_dma_proxy_channel *channel)
++{
++	struct mpfs_dma_proxy_channel_config *channel_config = channel->channel_config;
++	struct dma_async_tx_descriptor *desc;
++	struct dma_slave_config config;
++	int ret;
++
++	memset(&config, 0, sizeof(config));
++
++	config.src_addr_width = DMA_SLAVE_BUSWIDTH_8_BYTES;
++	config.dst_addr_width = DMA_SLAVE_BUSWIDTH_8_BYTES;
++	config.dst_maxburst = MPFS_DMA_PROXY_MAXBURST_SIZE;
++
++	ret = dmaengine_slave_config(channel->channel, &config);
++	if (ret < 0) {
++		dev_err(channel->dma_device, "DMA channel config failed (%d)\n", ret);
++		return ret;
++	}
++
++	desc = dmaengine_prep_dma_memcpy(channel->channel, channel_config->dst,
++					 channel_config->src, channel_config->length,
++					 DMA_CTRL_ACK | DMA_PREP_INTERRUPT);
++	if (!desc) {
++		dev_err(channel->dma_device, "DMA dmaengine_prep_slave_single failed\n");
++		return -EINVAL;
++	}
++
++	desc->callback = mpfs_dma_proxy_sync_callback;
++	desc->callback_param = &channel->complete;
++	init_completion(&channel->complete);
++
++	channel->cookie = dmaengine_submit(desc);
++	if (dma_submit_error(channel->cookie)) {
++		dev_err(channel->dma_device, "DMA submission failed\n");
++		return -ENXIO;
++	}
++
++	dma_async_issue_pending(channel->channel);
++
++	return 0;
++}
++
++static void mpfs_dma_proxy_wait_for_xfer(struct mpfs_dma_proxy_channel *channel)
++{
++	unsigned long timeout = msecs_to_jiffies(MPFS_DMA_PROXY_XFER_TIMEOUT_M_SEC);
++	enum dma_status status;
++
++	timeout = wait_for_completion_timeout(&channel->complete, timeout);
++	status = dma_async_is_tx_complete(channel->channel, channel->cookie, NULL, NULL);
++
++	if (timeout == 0)  {
++		dev_err(channel->dma_device, "DMA timed out\n");
++		channel->proxy_status = PROXY_TIMEOUT;
++	} else if (status != DMA_COMPLETE) {
++		channel->proxy_status = PROXY_ERROR;
++		dev_err(channel->dma_device,
++			"DMA returned completion callback status of: %s\n",
++			status == DMA_ERROR ? "error" : "in progress");
++	} else {
++		channel->proxy_status = PROXY_SUCCESS;
++	}
++}
++
++static int mpfs_dma_proxy_local_open(struct inode *ino, struct file *file)
++{
++	file->private_data = container_of(ino->i_cdev,
++					  struct mpfs_dma_proxy_channel, cdev);
++
++	return 0;
++}
++
++static int mpfs_dma_proxy_release(struct inode *ino, struct file *file)
++{
++	return 0;
++}
++
++static long mpfs_dma_proxy_ioctl(struct file *file, unsigned int cmd,
++				 unsigned long arg)
++{
++	struct mpfs_dma_proxy_channel *channel =
++			(struct mpfs_dma_proxy_channel *)file->private_data;
++
++	void __user *uarg = (void __user *)arg;
++	int ret;
++
++	switch (cmd) {
++	case MPFS_DMA_PROXY_START_XFER:
++		if (copy_from_user(channel->channel_config, uarg,
++				   sizeof(struct mpfs_dma_proxy_channel_config)))
++			return -EFAULT;
++
++		ret = mpfs_dma_proxy_start_transfer(channel);
++		if (ret)
++			return ret;
++
++		break;
++
++	case MPFS_DMA_PROXY_FINISH_XFER:
++		mpfs_dma_proxy_wait_for_xfer(channel);
++		if (copy_to_user(uarg, &channel->proxy_status,
++				 sizeof(enum mpfs_dma_proxy_status)))
++			return -EFAULT;
++
++		break;
++
++	default:
++		return -EOPNOTSUPP;
++	}
++
++	return 0;
++}
++
++static const struct file_operations dm_fops = {
++	.open		= mpfs_dma_proxy_local_open,
++	.release	= mpfs_dma_proxy_release,
++	.unlocked_ioctl = mpfs_dma_proxy_ioctl,
++};
++
++static int mpfs_dma_proxy_cdevice_init(struct mpfs_dma_proxy_channel *channel,
++				       char *name)
++{
++	static struct class *local_class;
++	int ret;
++
++	ret = alloc_chrdev_region(&channel->dev, 0, 1, MPFS_DMA_PROXY_DRIVER_NAME);
++
++	if (ret)
++		return dev_err_probe(channel->dma_device, ret,
++				     "unable to get a char device number\n");
++
++	cdev_init(&channel->cdev, &dm_fops);
++	channel->cdev.owner = THIS_MODULE;
++	ret = cdev_add(&channel->cdev, channel->dev, 1);
++
++	if (ret) {
++		dev_err_probe(channel->dma_device, ret, "unable to add char device\n");
++		goto error_cdev_add;
++	}
++
++	if (!local_class) {
++		local_class = class_create(MPFS_DMA_PROXY_DRIVER_NAME);
++
++		if (IS_ERR(channel->dma_device->class)) {
++			ret = dev_err_probe(channel->dma_device,
++					    PTR_ERR(channel->dma_device->class),
++					    "unable to create class\n");
++			goto error_class_create;
++		}
++	}
++
++	channel->class = local_class;
++
++	channel->proxy_device = device_create(channel->class, NULL,
++					      channel->dev, NULL, name);
++
++	if (IS_ERR(channel->proxy_device)) {
++		ret = dev_err_probe(channel->dma_device, PTR_ERR(channel->proxy_device),
++				    "unable to create the device\n");
++		goto error_device_create;
++	}
++
++	return 0;
++
++error_device_create:
++error_class_create:
++	cdev_del(&channel->cdev);
++
++error_cdev_add:
++	unregister_chrdev_region(channel->dev, 1);
++
++	return ret;
++}
++
++static void mpfs_dma_proxy_cdevice_exit(struct mpfs_dma_proxy *dma_proxy, int channel_no)
++{
++	struct mpfs_dma_proxy_channel *channel = &dma_proxy->channels[channel_no];
++
++	if (channel->proxy_device) {
++		device_destroy(channel->class, channel->dev);
++
++		/* If the active channels count is one we can destroy the class */
++		if (dma_proxy->active_channels == 1)
++			class_destroy(channel->class);
++
++		cdev_del(&channel->cdev);
++		unregister_chrdev_region(channel->dev, 1);
++	}
++}
++
++static int mpfs_dma_proxy_create_channel(struct platform_device *pdev,
++					 struct mpfs_dma_proxy_channel *channel,
++					 char *name, u32 direction)
++{
++	int ret;
++
++	channel->dma_device = &pdev->dev;
++	channel->channel = dma_request_slave_channel(&pdev->dev, name);
++	if (IS_ERR(channel->channel)) {
++		return dev_err_probe(channel->dma_device, PTR_ERR(channel->channel),
++				     "Failed to request DMA channel\n");
++	}
++
++	channel->channel_config =
++		devm_kmalloc(&pdev->dev, sizeof(struct mpfs_dma_proxy_channel_config), GFP_KERNEL);
++	if (IS_ERR(channel->channel_config)) {
++		ret = dev_err_probe(channel->dma_device, PTR_ERR(channel->channel_config),
++				    "Could not allocate channel config\n");
++		goto free_channel;
++	}
++
++	ret = mpfs_dma_proxy_cdevice_init(channel, name);
++	if (ret)
++		goto free_channel;
++
++	return 0;
++
++free_channel:
++	dma_release_channel(channel->channel);
++
++	return ret;
++}
++
++static void mpfs_dma_proxy_cleanup_channels(struct mpfs_dma_proxy *dma_proxy)
++{
++	struct mpfs_dma_proxy_channel *channels = dma_proxy->channels;
++	int i;
++
++	for (i = 0; i < dma_proxy->channel_count; i++) {
++		if (channels[i].proxy_device)
++			mpfs_dma_proxy_cdevice_exit(dma_proxy, i);
++
++		if (channels[i].channel) {
++			channels[i].channel->device->device_terminate_all(channels[i].channel);
++			dma_release_channel(channels[i].channel);
++		}
++
++		dma_proxy->active_channels--;
++	}
++}
++
++static int mpfs_dma_proxy_probe(struct platform_device *pdev)
++{
++	struct mpfs_dma_proxy *dma_proxy;
++	struct device *dev = &pdev->dev;
++	int ret, i;
++
++	dma_proxy = devm_kmalloc(dev, sizeof(struct mpfs_dma_proxy), GFP_KERNEL);
++	if (IS_ERR(dma_proxy))
++		return dev_err_probe(dev, PTR_ERR(dma_proxy), "Could not allocate proxy device\n");
++
++	dev_set_drvdata(dev, dma_proxy);
++
++	dma_proxy->channel_count =
++		device_property_read_string_array(dev, "dma-names", NULL, 0);
++
++	if (dma_proxy->channel_count <= 0)
++		return dev_err_probe(dev, dma_proxy->channel_count,
++				     "Could not get DMA channel count\n");
++
++	dma_proxy->names = devm_kmalloc_array(&pdev->dev, dma_proxy->channel_count,
++					      sizeof(char *), GFP_KERNEL);
++	if (IS_ERR(dma_proxy->names))
++		return dev_err_probe(dev, PTR_ERR(dma_proxy->names),
++				     "Could not allocate name array\n");
++
++	ret = device_property_read_string_array(&pdev->dev, "dma-names",
++						(const char **)dma_proxy->names,
++						dma_proxy->channel_count);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "Could not get the dma-names");
++
++	dma_proxy->channels =
++		devm_kmalloc(dev,
++			     sizeof(struct mpfs_dma_proxy_channel) * dma_proxy->channel_count,
++			     GFP_KERNEL);
++	if (IS_ERR(dma_proxy->channels))
++		return dev_err_probe(dev, PTR_ERR(dma_proxy->channels),
++				     "Could not allocate channels\n");
++
++	for (i = 0; i < dma_proxy->channel_count; i++) {
++		ret = mpfs_dma_proxy_create_channel(pdev, &dma_proxy->channels[i],
++						    dma_proxy->names[i], DMA_MEM_TO_MEM);
++
++		if (ret) {
++			dev_err_probe(dev, ret, "Fail to create channel\n");
++			dma_proxy->channel_count = dma_proxy->active_channels;
++			goto cleanup_channels;
++		}
++
++		dma_proxy->active_channels++;
++	}
++
++	dev_info(dev, "proxy dma %d channels initialized\n", dma_proxy->channel_count);
++
++	return 0;
++
++cleanup_channels:
++	mpfs_dma_proxy_cleanup_channels(dma_proxy);
++
++	return ret;
++}
++
++static int mpfs_dma_proxy_remove(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mpfs_dma_proxy *dma_proxy = dev_get_drvdata(dev);
++
++	mpfs_dma_proxy_cleanup_channels(dma_proxy);
++
++	return 0;
++}
++
++static const struct of_device_id mpfs_dma_proxy_of_ids[] = {
++	{ .compatible = "microchip,mpfs-dma-proxy",},
++	{}
++};
++
++static struct platform_driver mpfs_dma_proxy_driver = {
++	.driver = {
++		.name = MPFS_DMA_PROXY_DRIVER_NAME,
++		.of_match_table = mpfs_dma_proxy_of_ids,
++	},
++	.probe = mpfs_dma_proxy_probe,
++	.remove = mpfs_dma_proxy_remove,
++};
++
++static int __init mpfs_dma_proxy_init(void)
++{
++	return platform_driver_register(&mpfs_dma_proxy_driver);
++}
++
++static void __exit mpfs_dma_proxy_exit(void)
++{
++	platform_driver_unregister(&mpfs_dma_proxy_driver);
++}
++
++module_init(mpfs_dma_proxy_init);
++module_exit(mpfs_dma_proxy_exit);
++
++MODULE_AUTHOR("Shravan.chippa@microchip.com");
++MODULE_DESCRIPTION("Microchip PolarFire SoC proxy DMA driver");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ linux4microchip-fpga-2024.09/include/uapi/misc/mpfs-dma-proxy.h	2024-12-04 16:41:39.013589300 +0900
+@@ -0,0 +1,42 @@
++/* SPDX-License-Identifier: GPL-2.0+ WITH Linux-syscall-note */
++/*
++ * Microchip PolarFire SoC DMA proxy userspace header
++ *
++ * Copyright (C) 2022 Microchip Technology Inc. and its subsidiaries
++ *
++ * Author: Shravan Chippa <shravan.chippa@microchip.com>
++ */
++
++#ifndef _MPFS_DMA_PROXY_H
++#define _MPFS_DMA_PROXY_H
++
++#include <linux/types.h>
++
++#define MPFS_DMA_PROXY_IOC_MAGIC	'u'
++
++#define MPFS_DMA_PROXY_FINISH_XFER	_IOW(MPFS_DMA_PROXY_IOC_MAGIC, \
++					     '1', enum mpfs_dma_proxy_status*)
++#define MPFS_DMA_PROXY_START_XFER	_IOW(MPFS_DMA_PROXY_IOC_MAGIC, \
++					     '2', struct mpfs_dma_proxy_channel_config*)
++#define MPFS_DMA_PROXY_IOC_MAXNR	2
++
++/**
++ * struct mpfs_dma_proxy_channel_config  - dma config info
++ * @src:	source dma phy address
++ * @dst:	destination dma phy address
++ * @length:	size of xfer
++ */
++struct mpfs_dma_proxy_channel_config {
++	__u64 src;
++	__u64 dst;
++	__kernel_size_t length;
++};
++
++enum mpfs_dma_proxy_status {
++	PROXY_SUCCESS = 0,
++	PROXY_BUSY,
++	PROXY_TIMEOUT,
++	PROXY_ERROR,
++};
++
++#endif	/* _MPFS_DMA_PROXY_H */
