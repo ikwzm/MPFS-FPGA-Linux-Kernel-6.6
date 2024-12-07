@@ -1,0 +1,211 @@
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-armada-38x.c	2024-12-05 13:07:52.090399600 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-armada-38x.c	2024-12-04 16:41:32.426213300 +0900
+@@ -12,8 +12,8 @@
+ #include <linux/io.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ 
+ #include "pinctrl-mvebu.h"
+ 
+@@ -404,13 +404,8 @@
+ static int armada_38x_pinctrl_probe(struct platform_device *pdev)
+ {
+ 	struct mvebu_pinctrl_soc_info *soc = &armada_38x_pinctrl_info;
+-	const struct of_device_id *match =
+-		of_match_device(armada_38x_pinctrl_of_match, &pdev->dev);
+ 
+-	if (!match)
+-		return -ENODEV;
+-
+-	soc->variant = (unsigned) match->data & 0xff;
++	soc->variant = (unsigned)device_get_match_data(&pdev->dev) & 0xff;
+ 	soc->controls = armada_38x_mpp_controls;
+ 	soc->ncontrols = ARRAY_SIZE(armada_38x_mpp_controls);
+ 	soc->gpioranges = armada_38x_mpp_gpio_ranges;
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-armada-39x.c	2024-12-05 13:07:52.091396800 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-armada-39x.c	2024-12-04 16:41:32.426213300 +0900
+@@ -12,8 +12,8 @@
+ #include <linux/io.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ 
+ #include "pinctrl-mvebu.h"
+ 
+@@ -386,13 +386,8 @@
+ static int armada_39x_pinctrl_probe(struct platform_device *pdev)
+ {
+ 	struct mvebu_pinctrl_soc_info *soc = &armada_39x_pinctrl_info;
+-	const struct of_device_id *match =
+-		of_match_device(armada_39x_pinctrl_of_match, &pdev->dev);
+ 
+-	if (!match)
+-		return -ENODEV;
+-
+-	soc->variant = (unsigned) match->data & 0xff;
++	soc->variant = (unsigned)device_get_match_data(&pdev->dev) & 0xff;
+ 	soc->controls = armada_39x_mpp_controls;
+ 	soc->ncontrols = ARRAY_SIZE(armada_39x_mpp_controls);
+ 	soc->gpioranges = armada_39x_mpp_gpio_ranges;
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-armada-ap806.c	2024-12-05 13:07:52.091396800 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-armada-ap806.c	2024-12-04 16:41:32.426213300 +0900
+@@ -13,7 +13,6 @@
+ #include <linux/io.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
+ 
+ #include "pinctrl-mvebu.h"
+@@ -106,10 +105,8 @@
+ static int armada_ap806_pinctrl_probe(struct platform_device *pdev)
+ {
+ 	struct mvebu_pinctrl_soc_info *soc = &armada_ap806_pinctrl_info;
+-	const struct of_device_id *match =
+-		of_match_device(armada_ap806_pinctrl_of_match, &pdev->dev);
+ 
+-	if (!match || !pdev->dev.parent)
++	if (!pdev->dev.parent)
+ 		return -ENODEV;
+ 
+ 	soc->variant = 0; /* no variants for Armada AP806 */
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-armada-cp110.c	2024-12-05 13:07:52.218082400 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-armada-cp110.c	2024-12-04 16:41:32.427210400 +0900
+@@ -12,9 +12,9 @@
+ #include <linux/io.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
+ #include <linux/platform_device.h>
++#include <linux/property.h>
+ 
+ #include "pinctrl-mvebu.h"
+ 
+@@ -638,8 +638,6 @@
+ static int armada_cp110_pinctrl_probe(struct platform_device *pdev)
+ {
+ 	struct mvebu_pinctrl_soc_info *soc;
+-	const struct of_device_id *match =
+-		of_match_device(armada_cp110_pinctrl_of_match, &pdev->dev);
+ 	int i;
+ 
+ 	if (!pdev->dev.parent)
+@@ -650,7 +648,7 @@
+ 	if (!soc)
+ 		return -ENOMEM;
+ 
+-	soc->variant = (unsigned long) match->data & 0xff;
++	soc->variant = (unsigned long)device_get_match_data(&pdev->dev) & 0xff;
+ 	soc->controls = armada_cp110_mpp_controls;
+ 	soc->ncontrols = ARRAY_SIZE(armada_cp110_mpp_controls);
+ 	soc->modes = armada_cp110_mpp_modes;
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-armada-xp.c	2024-12-05 13:07:52.219055600 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-armada-xp.c	2024-12-04 16:41:32.427210400 +0900
+@@ -19,8 +19,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/clk.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ #include <linux/bitops.h>
+ 
+ #include "pinctrl-mvebu.h"
+@@ -568,14 +568,9 @@
+ static int armada_xp_pinctrl_probe(struct platform_device *pdev)
+ {
+ 	struct mvebu_pinctrl_soc_info *soc = &armada_xp_pinctrl_info;
+-	const struct of_device_id *match =
+-		of_match_device(armada_xp_pinctrl_of_match, &pdev->dev);
+ 	int nregs;
+ 
+-	if (!match)
+-		return -ENODEV;
+-
+-	soc->variant = (unsigned) match->data & 0xff;
++	soc->variant = (unsigned)device_get_match_data(&pdev->dev) & 0xff;
+ 
+ 	switch (soc->variant) {
+ 	case V_MV78230:
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-dove.c	2024-12-05 13:07:52.219055600 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-dove.c	2024-12-04 16:41:32.427210400 +0900
+@@ -12,9 +12,9 @@
+ #include <linux/platform_device.h>
+ #include <linux/clk.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/mfd/syscon.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
+ 
+ #include "pinctrl-mvebu.h"
+@@ -765,13 +765,11 @@
+ {
+ 	struct resource *res, *mpp_res;
+ 	struct resource fb_res;
+-	const struct of_device_id *match =
+-		of_match_device(dove_pinctrl_of_match, &pdev->dev);
+ 	struct mvebu_mpp_ctrl_data *mpp_data;
+ 	void __iomem *base;
+ 	int i;
+ 
+-	pdev->dev.platform_data = (void *)match->data;
++	pdev->dev.platform_data = (void *)device_get_match_data(&pdev->dev);
+ 
+ 	/*
+ 	 * General MPP Configuration Register is part of pdma registers.
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-kirkwood.c	2024-12-05 13:07:52.220052900 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-kirkwood.c	2024-12-04 16:41:32.428207700 +0900
+@@ -11,8 +11,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/clk.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ 
+ #include "pinctrl-mvebu.h"
+ 
+@@ -470,10 +470,7 @@
+ 
+ static int kirkwood_pinctrl_probe(struct platform_device *pdev)
+ {
+-	const struct of_device_id *match =
+-		of_match_device(kirkwood_pinctrl_of_match, &pdev->dev);
+-
+-	pdev->dev.platform_data = (void *)match->data;
++	pdev->dev.platform_data = (void *)device_get_match_data(&pdev->dev);
+ 
+ 	return mvebu_pinctrl_simple_mmio_probe(pdev);
+ }
+--- linux-6.6.51/drivers/pinctrl/mvebu/pinctrl-orion.c	2024-12-05 13:07:52.221050600 +0900
++++ linux4microchip-fpga-2024.09/drivers/pinctrl/mvebu/pinctrl-orion.c	2024-12-04 16:41:32.429205300 +0900
+@@ -19,8 +19,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/clk.h>
+ #include <linux/of.h>
+-#include <linux/of_device.h>
+ #include <linux/pinctrl/pinctrl.h>
++#include <linux/property.h>
+ 
+ #include "pinctrl-mvebu.h"
+ 
+@@ -218,10 +218,7 @@
+ 
+ static int orion_pinctrl_probe(struct platform_device *pdev)
+ {
+-	const struct of_device_id *match =
+-		of_match_device(orion_pinctrl_of_match, &pdev->dev);
+-
+-	pdev->dev.platform_data = (void*)match->data;
++	pdev->dev.platform_data = (void*)device_get_match_data(&pdev->dev);
+ 
+ 	mpp_base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(mpp_base))

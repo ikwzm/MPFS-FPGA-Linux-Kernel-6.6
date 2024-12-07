@@ -1,0 +1,434 @@
+--- linux-6.6.51/drivers/mmc/core/Kconfig	2024-12-05 13:07:48.727397000 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/Kconfig	2024-12-04 16:41:28.899648000 +0900
+@@ -15,7 +15,7 @@
+ 
+ config PWRSEQ_SD8787
+ 	tristate "HW reset support for SD8787 BT + Wifi module"
+-	depends on OF && (MWIFIEX != n || BT_MRVL_SDIO != n || LIBERTAS_SDIO != n || WILC1000_SDIO != n)
++	depends on OF && (MWIFIEX != n || BT_MRVL_SDIO != n || LIBERTAS_SDIO != n || WILC_SDIO != n)
+ 	help
+ 	  This selects hardware reset support for the SD8787 BT + Wifi
+ 	  module. By default this option is set to n.
+--- linux-6.6.51/drivers/mmc/core/card.h	2024-12-05 13:07:48.730388700 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/card.h	2024-12-04 16:41:28.902640000 +0900
+@@ -149,6 +149,9 @@
+ 		.of_compatible = _compatible,	\
+ 	}
+ 
++#define MMC_FIXUP_COMPATIBLE(_compatible, _fixup, _data) \
++	SDIO_FIXUP_COMPATIBLE(_compatible, _fixup, _data)
++
+ #define cid_rev(hwrev, fwrev, year, month)	\
+ 	(((u64) hwrev) << 40 |			\
+ 	 ((u64) fwrev) << 32 |			\
+--- linux-6.6.51/drivers/mmc/core/debugfs.c	2024-12-05 13:07:48.732383400 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/debugfs.c	2024-12-04 16:41:28.904634700 +0900
+@@ -12,9 +12,12 @@
+ #include <linux/slab.h>
+ #include <linux/stat.h>
+ #include <linux/fault-inject.h>
++#include <linux/time.h>
+ 
+ #include <linux/mmc/card.h>
+ #include <linux/mmc/host.h>
++#include <linux/mmc/mmc.h>
++#include <linux/mmc/sd.h>
+ 
+ #include "core.h"
+ #include "card.h"
+@@ -298,6 +301,49 @@
+ 	.release = single_release,
+ };
+ 
++static int mmc_caps_get(void *data, u64 *val)
++{
++	*val = *(u32 *)data;
++	return 0;
++}
++
++static int mmc_caps_set(void *data, u64 val)
++{
++	u32 *caps = data;
++	u32 diff = *caps ^ val;
++	u32 allowed = MMC_CAP_AGGRESSIVE_PM |
++		      MMC_CAP_SD_HIGHSPEED |
++		      MMC_CAP_MMC_HIGHSPEED |
++		      MMC_CAP_UHS |
++		      MMC_CAP_DDR;
++
++	if (diff & ~allowed)
++		return -EINVAL;
++
++	*caps = val;
++
++	return 0;
++}
++
++static int mmc_caps2_set(void *data, u64 val)
++{
++	u32 allowed = MMC_CAP2_HSX00_1_8V | MMC_CAP2_HSX00_1_2V;
++	u32 *caps = data;
++	u32 diff = *caps ^ val;
++
++	if (diff & ~allowed)
++		return -EINVAL;
++
++	*caps = val;
++
++	return 0;
++}
++
++DEFINE_DEBUGFS_ATTRIBUTE(mmc_caps_fops, mmc_caps_get, mmc_caps_set,
++			 "0x%08llx\n");
++DEFINE_DEBUGFS_ATTRIBUTE(mmc_caps2_fops, mmc_caps_get, mmc_caps2_set,
++			 "0x%08llx\n");
++
+ void mmc_add_host_debugfs(struct mmc_host *host)
+ {
+ 	struct dentry *root;
+@@ -306,8 +352,9 @@
+ 	host->debugfs_root = root;
+ 
+ 	debugfs_create_file("ios", S_IRUSR, root, host, &mmc_ios_fops);
+-	debugfs_create_x32("caps", S_IRUSR, root, &host->caps);
+-	debugfs_create_x32("caps2", S_IRUSR, root, &host->caps2);
++	debugfs_create_file("caps", 0600, root, &host->caps, &mmc_caps_fops);
++	debugfs_create_file("caps2", 0600, root, &host->caps2,
++			    &mmc_caps2_fops);
+ 	debugfs_create_file_unsafe("clock", S_IRUSR | S_IWUSR, root, host,
+ 				   &mmc_clock_fops);
+ 
+--- linux-6.6.51/drivers/mmc/core/mmc.c	2024-12-05 13:07:48.733380700 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/mmc.c	2024-12-04 16:41:28.905632000 +0900
+@@ -136,6 +136,17 @@
+ 	mmc_init_erase(card);
+ }
+ 
++
++static void mmc_set_wp_grp_size(struct mmc_card *card)
++{
++	if (card->ext_csd.erase_group_def & 1)
++		card->wp_grp_size = card->ext_csd.hc_erase_size *
++			card->ext_csd.raw_hc_erase_gap_size;
++	else
++		card->wp_grp_size = card->csd.erase_size *
++			(card->csd.wp_grp_size + 1);
++}
++
+ /*
+  * Given a 128-bit response, decode to our card CSD structure.
+  */
+@@ -186,6 +197,7 @@
+ 		b = UNSTUFF_BITS(resp, 37, 5);
+ 		csd->erase_size = (a + 1) * (b + 1);
+ 		csd->erase_size <<= csd->write_blkbits - 9;
++		csd->wp_grp_size = UNSTUFF_BITS(resp, 32, 5);
+ 	}
+ 
+ 	return 0;
+@@ -419,7 +431,6 @@
+ 
+ 	card->ext_csd.strobe_support = ext_csd[EXT_CSD_STROBE_SUPPORT];
+ 	card->ext_csd.raw_card_type = ext_csd[EXT_CSD_CARD_TYPE];
+-	mmc_select_card_type(card);
+ 
+ 	card->ext_csd.raw_s_a_timeout = ext_csd[EXT_CSD_S_A_TIMEOUT];
+ 	card->ext_csd.raw_erase_timeout_mult =
+@@ -614,11 +625,6 @@
+ 		} else {
+ 			card->ext_csd.data_tag_unit_size = 0;
+ 		}
+-
+-		card->ext_csd.max_packed_writes =
+-			ext_csd[EXT_CSD_MAX_PACKED_WRITES];
+-		card->ext_csd.max_packed_reads =
+-			ext_csd[EXT_CSD_MAX_PACKED_READS];
+ 	} else {
+ 		card->ext_csd.data_sector_size = 512;
+ 	}
+@@ -791,6 +797,7 @@
+ MMC_DEV_ATTR(date, "%02d/%04d\n", card->cid.month, card->cid.year);
+ MMC_DEV_ATTR(erase_size, "%u\n", card->erase_size << 9);
+ MMC_DEV_ATTR(preferred_erase_size, "%u\n", card->pref_erase << 9);
++MMC_DEV_ATTR(wp_grp_size, "%u\n", card->wp_grp_size << 9);
+ MMC_DEV_ATTR(ffu_capable, "%d\n", card->ext_csd.ffu_capable);
+ MMC_DEV_ATTR(hwrev, "0x%x\n", card->cid.hwrev);
+ MMC_DEV_ATTR(manfid, "0x%06x\n", card->cid.manfid);
+@@ -851,6 +858,7 @@
+ 	&dev_attr_date.attr,
+ 	&dev_attr_erase_size.attr,
+ 	&dev_attr_preferred_erase_size.attr,
++	&dev_attr_wp_grp_size.attr,
+ 	&dev_attr_fwrev.attr,
+ 	&dev_attr_ffu_capable.attr,
+ 	&dev_attr_hwrev.attr,
+@@ -1542,6 +1550,9 @@
+ 	if (!mmc_can_ext_csd(card))
+ 		goto bus_speed;
+ 
++	if (card->quirks & MMC_QUIRK_HS_CLK_REVERSED)
++		mmc_set_bus_speed(card);
++
+ 	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400ES) {
+ 		err = mmc_select_hs400es(card);
+ 		goto out;
+@@ -1666,6 +1677,9 @@
+ 		memcpy(card->raw_cid, cid, sizeof(card->raw_cid));
+ 	}
+ 
++	/* Fixup init methods */
++	mmc_fixup_device(card, mmc_init_methods);
++
+ 	/*
+ 	 * Call the optional HC's init_card function to handle quirks.
+ 	 */
+@@ -1734,6 +1748,12 @@
+ 		mmc_set_erase_size(card);
+ 	}
+ 
++	/*
++	 * Reselect the card type since host caps could have been changed when
++	 * debugging even if the card is not new.
++	 */
++	mmc_select_card_type(card);
++
+ 	/* Enable ERASE_GRP_DEF. This bit is lost after a reset or power off. */
+ 	if (card->ext_csd.rev >= 3) {
+ 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+@@ -1761,7 +1781,7 @@
+ 			mmc_set_erase_size(card);
+ 		}
+ 	}
+-
++	mmc_set_wp_grp_size(card);
+ 	/*
+ 	 * Ensure eMMC user default partition is enabled
+ 	 */
+--- linux-6.6.51/drivers/mmc/core/mmc_test.c	2024-12-05 13:07:48.734378000 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/mmc_test.c	2024-12-04 16:41:28.906629400 +0900
+@@ -1904,7 +1904,7 @@
+ }
+ 
+ static int mmc_test_rnd_perf(struct mmc_test_card *test, int write, int print,
+-			     unsigned long sz)
++			     unsigned long sz, int secs, int force_retuning)
+ {
+ 	unsigned int dev_addr, cnt, rnd_addr, range1, range2, last_ea = 0, ea;
+ 	unsigned int ssz;
+@@ -1921,7 +1921,7 @@
+ 	for (cnt = 0; cnt < UINT_MAX; cnt++) {
+ 		ktime_get_ts64(&ts2);
+ 		ts = timespec64_sub(ts2, ts1);
+-		if (ts.tv_sec >= 10)
++		if (ts.tv_sec >= secs)
+ 			break;
+ 		ea = mmc_test_rnd_num(range1);
+ 		if (ea == last_ea)
+@@ -1929,6 +1929,8 @@
+ 		last_ea = ea;
+ 		dev_addr = rnd_addr + test->card->pref_erase * ea +
+ 			   ssz * mmc_test_rnd_num(range2);
++		if (force_retuning)
++			mmc_retune_needed(test->card->host);
+ 		ret = mmc_test_area_io(test, sz, dev_addr, write, 0, 0);
+ 		if (ret)
+ 			return ret;
+@@ -1953,24 +1955,35 @@
+ 		 */
+ 		if (write) {
+ 			next = rnd_next;
+-			ret = mmc_test_rnd_perf(test, write, 0, sz);
++			ret = mmc_test_rnd_perf(test, write, 0, sz, 10, 0);
+ 			if (ret)
+ 				return ret;
+ 			rnd_next = next;
+ 		}
+-		ret = mmc_test_rnd_perf(test, write, 1, sz);
++		ret = mmc_test_rnd_perf(test, write, 1, sz, 10, 0);
+ 		if (ret)
+ 			return ret;
+ 	}
+ 	sz = t->max_tfr;
+ 	if (write) {
+ 		next = rnd_next;
+-		ret = mmc_test_rnd_perf(test, write, 0, sz);
++		ret = mmc_test_rnd_perf(test, write, 0, sz, 10, 0);
+ 		if (ret)
+ 			return ret;
+ 		rnd_next = next;
+ 	}
+-	return mmc_test_rnd_perf(test, write, 1, sz);
++	return mmc_test_rnd_perf(test, write, 1, sz, 10, 0);
++}
++
++static int mmc_test_retuning(struct mmc_test_card *test)
++{
++	if (!mmc_can_retune(test->card->host)) {
++		pr_info("%s: No retuning - test skipped\n",
++			mmc_hostname(test->card->host));
++		return RESULT_UNSUP_HOST;
++	}
++
++	return mmc_test_rnd_perf(test, 0, 0, 8192, 30, 1);
+ }
+ 
+ /*
+@@ -2921,6 +2934,14 @@
+ 		.run = mmc_test_cmds_during_write_cmd23_nonblock,
+ 		.cleanup = mmc_test_area_cleanup,
+ 	},
++
++	{
++		.name = "Re-tuning reliability",
++		.prepare = mmc_test_area_prepare,
++		.run = mmc_test_retuning,
++		.cleanup = mmc_test_area_cleanup,
++	},
++
+ };
+ 
+ static DEFINE_MUTEX(mmc_test_lock);
+--- linux-6.6.51/drivers/mmc/core/queue.c	2024-12-05 13:07:48.736372700 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/queue.c	2024-12-04 16:41:28.909621500 +0900
+@@ -260,11 +260,7 @@
+ 		}
+ 		break;
+ 	case MMC_ISSUE_ASYNC:
+-		/*
+-		 * For MMC host software queue, we only allow 2 requests in
+-		 * flight to avoid a long latency.
+-		 */
+-		if (host->hsq_enabled && mq->in_flight[issue_type] > 2) {
++		if (host->hsq_enabled && mq->in_flight[issue_type] > host->hsq_depth) {
+ 			spin_unlock_irq(&mq->lock);
+ 			return BLK_STS_RESOURCE;
+ 		}
+@@ -355,8 +351,6 @@
+ 	if (mmc_can_erase(card))
+ 		mmc_queue_setup_discard(mq->queue, card);
+ 
+-	if (!mmc_dev(host)->dma_mask || !*mmc_dev(host)->dma_mask)
+-		blk_queue_bounce_limit(mq->queue, BLK_BOUNCE_HIGH);
+ 	blk_queue_max_hw_sectors(mq->queue,
+ 		min(host->max_blk_count, host->max_req_size / 512));
+ 	if (host->can_dma_map_merge)
+--- linux-6.6.51/drivers/mmc/core/quirks.h	2024-12-05 13:07:48.737370000 +0900
++++ linux4microchip-fpga-2024.09/drivers/mmc/core/quirks.h	2024-12-04 16:41:28.910618700 +0900
+@@ -191,6 +191,13 @@
+ 	END_FIXUP
+ };
+ 
++static const struct mmc_fixup __maybe_unused mmc_init_methods[] = {
++	MMC_FIXUP_COMPATIBLE("microchip,sama7g5-sdhci", add_quirk,
++			     MMC_QUIRK_HS_CLK_REVERSED),
++
++	END_FIXUP
++};
++
+ static inline bool mmc_fixup_of_compatible_match(struct mmc_card *card,
+ 						 const char *compatible)
+ {
+@@ -202,6 +209,8 @@
+ 			return true;
+ 		}
+ 	}
++	if (of_device_is_compatible(mmc_dev(card->host)->of_node, compatible))
++		return true;
+ 
+ 	return false;
+ }
+--- linux-6.6.51/include/linux/mmc/card.h	2024-12-05 13:07:57.370273600 +0900
++++ linux4microchip-fpga-2024.09/include/linux/mmc/card.h	2024-12-04 16:41:37.691127300 +0900
+@@ -32,6 +32,7 @@
+ 	unsigned int		r2w_factor;
+ 	unsigned int		max_dtr;
+ 	unsigned int		erase_size;		/* In sectors */
++	unsigned int		wp_grp_size;
+ 	unsigned int		read_blkbits;
+ 	unsigned int		write_blkbits;
+ 	unsigned int		capacity;
+@@ -52,9 +53,6 @@
+ 	u8			part_config;
+ 	u8			cache_ctrl;
+ 	u8			rst_n_function;
+-	u8			max_packed_writes;
+-	u8			max_packed_reads;
+-	u8			packed_event_en;
+ 	unsigned int		part_time;		/* Units: ms */
+ 	unsigned int		sa_timeout;		/* Units: 100ns */
+ 	unsigned int		generic_cmd6_time;	/* Units: 10ms */
+@@ -296,6 +294,7 @@
+ #define MMC_QUIRK_BROKEN_SD_DISCARD	(1<<14)	/* Disable broken SD discard support */
+ #define MMC_QUIRK_BROKEN_SD_CACHE	(1<<15)	/* Disable broken SD cache support */
+ #define MMC_QUIRK_BROKEN_CACHE_FLUSH	(1<<16)	/* Don't flush cache until the write has occurred */
++#define MMC_QUIRK_HS_CLK_REVERSED	(1<<17)	/* Reversed high-speed/clock init order */
+ 
+ 	bool			written_flag;	/* Indicates eMMC has been written since power on */
+ 	bool			reenable_cmdq;	/* Re-enable Command Queue */
+@@ -306,6 +305,7 @@
+ 	unsigned int		eg_boundary;	/* don't cross erase-group boundaries */
+ 	unsigned int		erase_arg;	/* erase / trim / discard */
+  	u8			erased_byte;	/* value of erased bytes */
++	unsigned int		wp_grp_size;	/* write group size in sectors */
+ 
+ 	u32			raw_cid[4];	/* raw card CID */
+ 	u32			raw_csd[4];	/* raw card CSD */
+--- linux-6.6.51/include/linux/mmc/core.h	2024-12-05 13:07:57.371271100 +0900
++++ linux4microchip-fpga-2024.09/include/linux/mmc/core.h	2024-12-04 16:41:37.692124800 +0900
+@@ -27,7 +27,6 @@
+ 	u32			opcode;
+ 	u32			arg;
+ #define MMC_CMD23_ARG_REL_WR	(1 << 31)
+-#define MMC_CMD23_ARG_PACKED	((0 << 31) | (1 << 30))
+ #define MMC_CMD23_ARG_TAG_REQ	(1 << 29)
+ 	u32			resp[4];
+ 	unsigned int		flags;		/* expected response type */
+--- linux-6.6.51/include/linux/mmc/host.h	2024-12-05 13:07:57.371271100 +0900
++++ linux4microchip-fpga-2024.09/include/linux/mmc/host.h	2024-12-04 16:41:37.692124800 +0900
+@@ -526,6 +526,7 @@
+ 
+ 	/* Host Software Queue support */
+ 	bool			hsq_enabled;
++	int			hsq_depth;
+ 
+ 	u32			err_stats[MMC_ERR_MAX];
+ 	unsigned long		private[] ____cacheline_aligned;
+--- linux-6.6.51/include/linux/mmc/mmc.h	2024-12-05 13:07:57.372268300 +0900
++++ linux4microchip-fpga-2024.09/include/linux/mmc/mmc.h	2024-12-04 16:41:37.692124800 +0900
+@@ -257,8 +257,6 @@
+ #define EXT_CSD_FLUSH_CACHE		32      /* W */
+ #define EXT_CSD_CACHE_CTRL		33      /* R/W */
+ #define EXT_CSD_POWER_OFF_NOTIFICATION	34	/* R/W */
+-#define EXT_CSD_PACKED_FAILURE_INDEX	35	/* RO */
+-#define EXT_CSD_PACKED_CMD_STATUS	36	/* RO */
+ #define EXT_CSD_EXP_EVENTS_STATUS	54	/* RO, 2 bytes */
+ #define EXT_CSD_EXP_EVENTS_CTRL		56	/* R/W, 2 bytes */
+ #define EXT_CSD_DATA_SECTOR_SIZE	61	/* R */
+@@ -321,8 +319,6 @@
+ #define EXT_CSD_SUPPORTED_MODE		493	/* RO */
+ #define EXT_CSD_TAG_UNIT_SIZE		498	/* RO */
+ #define EXT_CSD_DATA_TAG_SUPPORT	499	/* RO */
+-#define EXT_CSD_MAX_PACKED_WRITES	500	/* RO */
+-#define EXT_CSD_MAX_PACKED_READS	501	/* RO */
+ #define EXT_CSD_BKOPS_SUPPORT		502	/* RO */
+ #define EXT_CSD_HPI_FEATURES		503	/* RO */
+ 
+@@ -402,18 +398,12 @@
+ #define EXT_CSD_PWR_CL_8BIT_SHIFT	4
+ #define EXT_CSD_PWR_CL_4BIT_SHIFT	0
+ 
+-#define EXT_CSD_PACKED_EVENT_EN	BIT(3)
+-
+ /*
+  * EXCEPTION_EVENT_STATUS field
+  */
+ #define EXT_CSD_URGENT_BKOPS		BIT(0)
+ #define EXT_CSD_DYNCAP_NEEDED		BIT(1)
+ #define EXT_CSD_SYSPOOL_EXHAUSTED	BIT(2)
+-#define EXT_CSD_PACKED_FAILURE		BIT(3)
+-
+-#define EXT_CSD_PACKED_GENERIC_ERROR	BIT(0)
+-#define EXT_CSD_PACKED_INDEXED_ERROR	BIT(1)
+ 
+ /*
+  * BKOPS status level

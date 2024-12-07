@@ -1,0 +1,11 @@
+--- linux-6.6.51/Makefile	2024-12-05 13:07:33.048832300 +0900
++++ linux4microchip-fpga-2024.09/Makefile	2024-12-04 16:41:12.500261000 +0900
+@@ -2,7 +2,7 @@
+ VERSION = 6
+ PATCHLEVEL = 6
+ SUBLEVEL = 51
+-EXTRAVERSION =
++EXTRAVERSION = -mpfs-fpga
+ NAME = Hurr durr I'ma ninja sloth
+ 
+ # *DOCUMENTATION*

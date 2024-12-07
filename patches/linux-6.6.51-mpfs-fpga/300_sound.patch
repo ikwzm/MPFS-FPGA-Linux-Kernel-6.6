@@ -1,0 +1,6107 @@
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,asrc-card.yaml	2024-12-04 16:41:11.135911100 +0900
+@@ -0,0 +1,162 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/microchip,asrc-card.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Sound Card driver for Microchip's Asynchronous Sample Rate Converter
++
++maintainers:
++  - Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++description:
++  Sound Card driver to be used with Microchip's ASRC. It is able to register
++  the ASRC as Front-End and makes the rest of the audio IPs behave as
++  Back-ends and as normal PCMs as well. The ASRC use is optional though.
++
++definitions:
++  model:
++    description: User specified audio sound card name.
++    $ref: /schemas/types.yaml#/definitions/string
++
++  audio-routing:
++    description: |
++      A list of the connections between audio components.
++      Each entry is a pair of strings, the first being the
++      connection's sink, the second being the connection's source.
++    $ref: /schemas/types.yaml#/definitions/non-unique-string-array
++
++  dai-tdm-slot-num:
++    description: see tdm-slot.txt.
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  dai-tdm-slot-width:
++    description: see tdm-slot.txt.
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  frame-master:
++    description: Indicates dai-link frame master.
++    $ref: /schemas/types.yaml#/definitions/phandle
++
++  bitclock-master:
++    description: Indicates dai-link bit clock master
++    $ref: /schemas/types.yaml#/definitions/phandle
++
++  label:
++    maxItems: 1
++
++  format:
++    description: audio format.
++    items:
++      enum:
++        - i2s
++        - right_j
++        - left_j
++        - dsp_a
++        - dsp_b
++        - pdm
++
++  convert-rate:
++    description: Front-End to Back-End rate convert.
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  convert-channels:
++    description: Front-end to Back-end channels convert.
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  convert-sample-format:
++    description: Front-end to Back-end sample format convert.
++    $ref: /schemas/types.yaml#/definitions/uint32
++
++  dai:
++    type: object
++    properties:
++      sound-dai:
++        maxItems: 1
++
++      # common properties
++      frame-master:
++        $ref: /schemas/types.yaml#/definitions/flag
++      bitclock-master:
++        $ref: /schemas/types.yaml#/definitions/flag
++      dai-tdm-slot-num:
++        $ref: "#/definitions/dai-tdm-slot-num"
++      dai-tdm-slot-width:
++        $ref: "#/definitions/dai-tdm-slot-width"
++    required:
++      - sound-dai
++properties:
++  compatible:
++    const: microchip,sama7g5-asrc-card
++
++  "#address-cells":
++    const: 1
++  "#size-cells":
++    const: 0
++
++  label:
++    $ref: "#/definitions/label"
++
++patternProperties:
++  "^microchip,dai-link(@[0-9a-f]+)?$":
++    description: |
++      Container for dai-link level properties and the CPU and CODEC sub-nodes.
++      This container may be omitted when the card has only one DAI link.
++    type: object
++    properties:
++
++      # common properties
++      microchip,frame-master:
++        $ref: "#/definitions/frame-master"
++      microchip,bitclock-master:
++        $ref: "#/definitions/bitclock-master"
++      microchip,format:
++        $ref: "#/definitions/format"
++      microchip,convert-rate:
++        $ref: "#/definitions/convert-rate"
++      microchip,convert-channels:
++        $ref: "#/definitions/convert-channels"
++      microchip,convert-sample-format:
++        $ref: "#/definitions/convert-sample-format"
++
++    patternProperties:
++      "^cpu(@[0-9a-f]+)?":
++        $ref: "#/definitions/dai"
++      "^codec(@[0-9a-f]+)?":
++        $ref: "#/definitions/dai"
++    additionalProperties: false
++
++required:
++  - compatible
++  - microchip,model
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/sound/microchip,asrc-card.h>
++
++    sound: sound {
++        #address-cells = <1>;
++        #size-cells = <0>;
++        compatible = "microchip,asrc-card";
++        microchip,model = "mchp-asrc-card @ sama5g7 EK";
++
++        microchip,audio-asrc = <&asrc 0>, <&asrc 1>, <&asrc 2>, <&asrc 3>;
++
++        microchip,dai-link@0 {
++            reg = <0>;
++            microchip,format = "i2s";
++            microchip,frame-master = <&dailink_master>;
++            microchip,bitclock-master = <&dailink_master>;
++            microchip,convert-channels = <2>;
++            microchip,convert-rate = <48000>;
++            microchip,convert-sample-format = <MCHP_ASRC_PCM_FORMAT_S24_LE>;
++            dailink_master: cpu {
++                sound-dai = <&i2s0>;
++            };
++            codec {
++                sound-dai = <&wm8731>;
++            };
++        };
++    };
+--- /dev/null
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,asrc.yaml	2024-12-04 16:41:11.136908400 +0900
+@@ -0,0 +1,117 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/microchip,asrc.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Asynchronous Sample Rate Converter
++
++maintainers:
++  - Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++description:
++  The Asynchronous Sample Rate Converter (ASRC) converts the sample rate of an
++  incoming audio frame without affecting quality. It supports input and output
++  sampling rates up to 192 kHz. It is made of 4 independent digital signal
++  processing modules (DSP)
++
++properties:
++  compatible:
++    const: microchip,sama7g5-asrc
++
++  reg:
++    maxItems: 1
++
++  "#sound-dai-cells":
++    const: 1
++
++  interrupts:
++    maxItems: 1
++
++  clocks:
++    items:
++      - description: Peripheral Bus Clock
++      - description: Generic Clock
++
++  clock-names:
++    items:
++      - const: pclk
++      - const: gclk
++
++  dmas:
++    description: RX and TX DMA Channels
++    minItems: 8
++    maxItems: 8
++
++  dma-names:
++    items:
++      - const: rx0
++      - const: tx0
++      - const: rx1
++      - const: tx1
++      - const: rx2
++      - const: tx2
++      - const: rx3
++      - const: tx3
++
++  microchip,triggers:
++    $ref: /schemas/types.yaml#/definitions/phandle-array
++    minItems: 1
++    maxItems: 16
++    description: |
++      List of phandles pointing to other audio peripherals that can generate
++      a trigger to ASRC. The trigger is used by the ASRC to compute the needed
++      sampling rate.
++
++  microchip,trigger-indexes:
++    $ref: /schemas/types.yaml#/definitions/uint32-array
++    minItems: 1
++    maxItems: 16
++    description: |
++      An array of external (to ASRC) trigger indexes. Position of an entry
++      determines to which trigger phandle (from the 'trigger' property) the
++      value reffers to. e.g. the first value in 'trigger-indexes' will
++      correspond to the first phande in 'triggers', the second value from
++      'trigger-indexes' will correspond to the second phandle in 'triggers',
++      etc.
++
++required:
++  - compatible
++  - reg
++  - "#sound-dai-cells"
++  - interrupts
++  - clocks
++  - clock-names
++  - dmas
++  - dma-names
++  - microchip,triggers
++  - microchip,trigger-indexes
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/clock/at91.h>
++    #include <dt-bindings/dma/at91.h>
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++
++    asrc: sound@e1610000 {
++        compatible = "microchip,sama7g5-asrc";
++        reg = <0xe1610000 0x1000>;
++        interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
++        #sound-dai-cells = <1>;
++        dmas = <&dma0 AT91_XDMAC_DT_PERID(55)>,
++               <&dma0 AT91_XDMAC_DT_PERID(56)>,
++               <&dma0 AT91_XDMAC_DT_PERID(57)>,
++               <&dma0 AT91_XDMAC_DT_PERID(58)>,
++               <&dma0 AT91_XDMAC_DT_PERID(59)>,
++               <&dma0 AT91_XDMAC_DT_PERID(60)>,
++               <&dma0 AT91_XDMAC_DT_PERID(61)>,
++               <&dma0 AT91_XDMAC_DT_PERID(62)>;
++        dma-names = "rx0", "tx0", "rx1", "tx1", "rx2", "tx2", "rx3", "tx3";
++        clocks = <&pmc PMC_TYPE_PERIPHERAL 30>, <&pmc PMC_TYPE_GCK 30>;
++        clock-names = "pclk", "gclk";
++        microchip,triggers = <&i2s0>, <&i2s1>, <&pdmc0>, <&pdmc1>, <&ssc0>,
++                             <&ssc1>, <&spdiftx>, <&spdifrx>;
++        microchip,trigger-indexes = <1>, <2>, <3>, <4>, <5>, <8>, <9>, <10>;
++    };
+--- linux-6.6.51/Documentation/devicetree/bindings/sound/microchip,sama7g5-i2smcc.yaml	2024-12-05 13:07:31.766263500 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,sama7g5-i2smcc.yaml	2024-12-04 16:41:11.136908400 +0900
+@@ -47,6 +47,15 @@
+       - const: gclk
+     minItems: 1
+ 
++  sound-name-prefix:
++    pattern: "^I2SMCC[0-9]$"
++    $ref: /schemas/types.yaml#/definitions/string
++    description:
++      used as prefix for sink/source names of the component. Must be a
++      unique string among multiple instances of the same component.
++      The name can be "I2SMCC0" or "I2SMCC1" ... "I2SMCCx", where x depends
++      on the maximum available instances on a Microchip SoC.
++
+   dmas:
+     items:
+       - description: TX DMA Channel
+--- linux-6.6.51/Documentation/devicetree/bindings/sound/microchip,sama7g5-pdmc.yaml	2024-12-05 13:07:31.767260800 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,sama7g5-pdmc.yaml	2024-12-04 16:41:11.136908400 +0900
+@@ -69,6 +69,15 @@
+       enabling the PDMC microphones to avoid unwanted noise due to microphones
+       not being ready.
+ 
++  sound-name-prefix:
++    pattern: "^PDMC[0-9]$"
++    $ref: /schemas/types.yaml#/definitions/string
++    description:
++      used as prefix for sink/source names of the component. Must be a
++      unique string among multiple instances of the same component.
++      The name can be "PDMC0" or "PDMC1" ... "PDMCx", where x depends
++      on the maximum available instances on a Microchip SoC.
++
+ required:
+   - compatible
+   - reg
+--- linux-6.6.51/Documentation/devicetree/bindings/sound/microchip,sama7g5-spdifrx.yaml	2024-12-05 13:07:31.767260800 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,sama7g5-spdifrx.yaml	2024-12-04 16:41:11.137905800 +0900
+@@ -43,6 +43,15 @@
+   dma-names:
+     const: rx
+ 
++  sound-name-prefix:
++    pattern: "^SPDIFRX[0-9]$"
++    $ref: /schemas/types.yaml#/definitions/string
++    description:
++      used as prefix for sink/source names of the component. Must be a
++      unique string among multiple instances of the same component.
++      The name can be "SPDIFRX0" or "SPDIFRX1" ... "SPDIFRXx", where x depends
++      on the maximum available instances on a Microchip SoC.
++
+ required:
+   - "#sound-dai-cells"
+   - compatible
+--- linux-6.6.51/Documentation/devicetree/bindings/sound/microchip,sama7g5-spdiftx.yaml	2024-12-05 13:07:31.767260800 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/sound/microchip,sama7g5-spdiftx.yaml	2024-12-04 16:41:11.137905800 +0900
+@@ -46,6 +46,15 @@
+   dma-names:
+     const: tx
+ 
++  sound-name-prefix:
++    pattern: "^SPDIFTX[0-9]$"
++    $ref: /schemas/types.yaml#/definitions/string
++    description:
++      used as prefix for sink/source names of the component. Must be a
++      unique string among multiple instances of the same component.
++      The name can be "SPDIFTX0" or "SPDIFTX1" ... "SPDIFTXx", where x depends
++      on the maximum available instances on a Microchip SoC.
++
+ required:
+   - "#sound-dai-cells"
+   - compatible
+--- /dev/null
++++ linux4microchip-fpga-2024.09/include/dt-bindings/sound/microchip,asrc-card.h	2024-12-04 16:41:37.141597600 +0900
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __DT_BINDINGS_MICROCHIP_ASRC_CARD_H__
++#define __DT_BINDINGS_MICROCHIP_ASRC_CARD_H__
++
++/* formats to be used for Back-ends of Microhip's ASRC */
++/* must be kept in-sync with include/uapi/sound/asound.h */
++#define MCHP_ASRC_PCM_FORMAT_S8		0
++#define MCHP_ASRC_PCM_FORMAT_S16_LE	2
++#define MCHP_ASRC_PCM_FORMAT_S24_LE	6
++#define MCHP_ASRC_PCM_FORMAT_S32_LE	10
++
++#endif /* __DT_BINDINGS_MICROCHIP_ASRC_CARD_H__ */
+--- linux-6.6.51/include/sound/pcm.h	2024-12-05 13:07:58.178112400 +0900
++++ linux4microchip-fpga-2024.09/include/sound/pcm.h	2024-12-04 16:41:38.496971400 +0900
+@@ -579,6 +579,10 @@
+ }
+ #endif
+ int snd_pcm_kernel_ioctl(struct snd_pcm_substream *substream, unsigned int cmd, void *arg);
++struct snd_pcm_runtime *snd_pcm_runtime_alloc(void);
++void snd_pcm_runtime_free(struct snd_pcm_runtime *runtime);
++void snd_pcm_runtime_set(struct snd_pcm_substream *substream,
++			 struct snd_pcm_hw_params *params);
+ int snd_pcm_open_substream(struct snd_pcm *pcm, int stream, struct file *file,
+ 			   struct snd_pcm_substream **rsubstream);
+ void snd_pcm_release_substream(struct snd_pcm_substream *substream);
+@@ -1087,6 +1091,9 @@
+ 			snd_pcm_hw_rule_func_t func, void *private,
+ 			int dep, ...);
+ 
++int snd_pcm_hw_constraints_init(struct snd_pcm_substream *substream);
++int snd_pcm_hw_constraints_complete(struct snd_pcm_substream *substream);
++
+ /**
+  * snd_pcm_hw_constraint_single() - Constrain parameter to a single value
+  * @runtime: PCM runtime instance
+--- linux-6.6.51/include/sound/soc.h	2024-12-05 13:07:58.194069600 +0900
++++ linux4microchip-fpga-2024.09/include/sound/soc.h	2024-12-04 16:41:38.511931400 +0900
+@@ -751,6 +751,7 @@
+ 
+ 	/* This DAI link can route to other DAI links at runtime (Frontend)*/
+ 	unsigned int dynamic:1;
++	unsigned int dpcm_loopback:1;
+ 
+ 	/* DPCM capture and Playback support */
+ 	unsigned int dpcm_capture:1;
+--- linux-6.6.51/sound/core/pcm.c	2024-12-05 13:08:00.531815200 +0900
++++ linux4microchip-fpga-2024.09/sound/core/pcm.c	2024-12-04 16:41:41.095020600 +0900
+@@ -884,6 +884,57 @@
+ 	return snd_pcm_free(pcm);
+ }
+ 
++struct snd_pcm_runtime *snd_pcm_runtime_alloc(void)
++{
++	struct snd_pcm_runtime *runtime;
++	size_t size;
++
++	runtime = kzalloc(sizeof(*runtime), GFP_KERNEL);
++	if (!runtime)
++		return NULL;
++
++	size = PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status));
++	runtime->status = alloc_pages_exact(size, GFP_KERNEL);
++	if (!runtime->status) {
++		kfree(runtime);
++		return NULL;
++	}
++	memset(runtime->status, 0, size);
++
++	size = PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control));
++	runtime->control = alloc_pages_exact(size, GFP_KERNEL);
++	if (!runtime->control) {
++		free_pages_exact(runtime->status,
++				 PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status)));
++		kfree(runtime);
++		return NULL;
++	}
++	memset(runtime->control, 0, size);
++
++	init_waitqueue_head(&runtime->sleep);
++	init_waitqueue_head(&runtime->tsleep);
++
++	__snd_pcm_set_state(runtime, SNDRV_PCM_STATE_OPEN);
++	mutex_init(&runtime->buffer_mutex);
++	atomic_set(&runtime->buffer_accessing, 0);
++
++	return runtime;
++}
++EXPORT_SYMBOL_GPL(snd_pcm_runtime_alloc);
++
++void snd_pcm_runtime_free(struct snd_pcm_runtime *runtime)
++{
++	free_pages_exact(runtime->status,
++			 PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status)));
++	free_pages_exact(runtime->control,
++			 PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control)));
++	kfree(runtime->hw_constraints.rules);
++	mutex_destroy(&runtime->buffer_mutex);
++	snd_fasync_free(runtime->fasync);
++	kfree(runtime);
++}
++EXPORT_SYMBOL_GPL(snd_pcm_runtime_free);
++
+ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
+ 			     struct file *file,
+ 			     struct snd_pcm_substream **rsubstream)
+@@ -893,7 +944,6 @@
+ 	struct snd_pcm_runtime *runtime;
+ 	struct snd_card *card;
+ 	int prefer_subdevice;
+-	size_t size;
+ 
+ 	if (snd_BUG_ON(!pcm || !rsubstream))
+ 		return -ENXIO;
+@@ -947,35 +997,10 @@
+ 	if (substream == NULL)
+ 		return -EAGAIN;
+ 
+-	runtime = kzalloc(sizeof(*runtime), GFP_KERNEL);
+-	if (runtime == NULL)
++	runtime = snd_pcm_runtime_alloc();
++	if (!runtime)
+ 		return -ENOMEM;
+ 
+-	size = PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status));
+-	runtime->status = alloc_pages_exact(size, GFP_KERNEL);
+-	if (runtime->status == NULL) {
+-		kfree(runtime);
+-		return -ENOMEM;
+-	}
+-	memset(runtime->status, 0, size);
+-
+-	size = PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control));
+-	runtime->control = alloc_pages_exact(size, GFP_KERNEL);
+-	if (runtime->control == NULL) {
+-		free_pages_exact(runtime->status,
+-			       PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status)));
+-		kfree(runtime);
+-		return -ENOMEM;
+-	}
+-	memset(runtime->control, 0, size);
+-
+-	init_waitqueue_head(&runtime->sleep);
+-	init_waitqueue_head(&runtime->tsleep);
+-
+-	__snd_pcm_set_state(runtime, SNDRV_PCM_STATE_OPEN);
+-	mutex_init(&runtime->buffer_mutex);
+-	atomic_set(&runtime->buffer_accessing, 0);
+-
+ 	substream->runtime = runtime;
+ 	substream->private_data = pcm->private_data;
+ 	substream->ref_count = 1;
+@@ -995,11 +1020,6 @@
+ 	runtime = substream->runtime;
+ 	if (runtime->private_free != NULL)
+ 		runtime->private_free(runtime);
+-	free_pages_exact(runtime->status,
+-		       PAGE_ALIGN(sizeof(struct snd_pcm_mmap_status)));
+-	free_pages_exact(runtime->control,
+-		       PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control)));
+-	kfree(runtime->hw_constraints.rules);
+ 	/* Avoid concurrent access to runtime via PCM timer interface */
+ 	if (substream->timer) {
+ 		spin_lock_irq(&substream->timer->lock);
+@@ -1008,9 +1028,7 @@
+ 	} else {
+ 		substream->runtime = NULL;
+ 	}
+-	mutex_destroy(&runtime->buffer_mutex);
+-	snd_fasync_free(runtime->fasync);
+-	kfree(runtime);
++	snd_pcm_runtime_free(runtime);
+ 	put_pid(substream->pid);
+ 	substream->pid = NULL;
+ 	substream->pstr->substream_opened--;
+--- linux-6.6.51/sound/core/pcm_dmaengine.c	2024-12-05 13:08:00.532811800 +0900
++++ linux4microchip-fpga-2024.09/sound/core/pcm_dmaengine.c	2024-12-04 16:41:41.096018000 +0900
+@@ -137,6 +137,20 @@
+ 	struct snd_pcm_substream *substream = arg;
+ 	struct dmaengine_pcm_runtime_data *prtd = substream_to_prtd(substream);
+ 
++	/*
++	 * workaround to clear mchp-pdmc's channel index when used as BE with
++	 * mchp-asrc
++	 */
++	if (substream->pcm->internal &&
++	    !strncmp(prtd->dma_chan->slave->driver->name, "mchp-pdmc", sizeof("mchp-pdmc"))) {
++		unsigned int sample_size = samples_to_bytes(substream->runtime, 1);
++		u8 *dma_ptr = substream->runtime->dma_area + prtd->pos;
++		u8 *dma_ptr_end = dma_ptr + snd_pcm_lib_period_bytes(substream);
++
++		for (; dma_ptr < dma_ptr_end; dma_ptr += sample_size)
++			*dma_ptr = 0;
++	}
++
+ 	new_pos = prtd->pos + snd_pcm_lib_period_bytes(substream);
+ 	if (new_pos >= snd_pcm_lib_buffer_bytes(substream))
+ 		new_pos = 0;
+--- linux-6.6.51/sound/core/pcm_native.c	2024-12-05 13:08:00.535804500 +0900
++++ linux4microchip-fpga-2024.09/sound/core/pcm_native.c	2024-12-04 16:41:41.099009900 +0900
+@@ -261,7 +261,7 @@
+ 	if (!(substream->runtime->hw.info & SNDRV_PCM_INFO_MMAP))
+ 		return false;
+ 
+-	if (substream->ops->mmap || substream->ops->page)
++	if (substream->ops && (substream->ops->mmap || substream->ops->page))
+ 		return true;
+ 
+ 	dmabuf = snd_pcm_get_dma_buf(substream);
+@@ -709,13 +709,69 @@
+ #define is_oss_stream(substream)	false
+ #endif
+ 
++void snd_pcm_runtime_set(struct snd_pcm_substream *substream,
++			 struct snd_pcm_hw_params *params)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	unsigned int bits;
++	snd_pcm_uframes_t frames;
++
++	runtime->access = params_access(params);
++	runtime->format = params_format(params);
++	runtime->subformat = params_subformat(params);
++	runtime->channels = params_channels(params);
++	runtime->rate = params_rate(params);
++	runtime->period_size = params_period_size(params);
++	runtime->periods = params_periods(params);
++	runtime->buffer_size = params_buffer_size(params);
++	runtime->info = params->info;
++	runtime->rate_num = params->rate_num;
++	runtime->rate_den = params->rate_den;
++	runtime->no_period_wakeup =
++			(params->info & SNDRV_PCM_INFO_NO_PERIOD_WAKEUP) &&
++			(params->flags & SNDRV_PCM_HW_PARAMS_NO_PERIOD_WAKEUP);
++
++	bits = snd_pcm_format_physical_width(runtime->format);
++	runtime->sample_bits = bits;
++	bits *= runtime->channels;
++	runtime->frame_bits = bits;
++	frames = 1;
++	while (bits % 8 != 0) {
++		bits *= 2;
++		frames *= 2;
++	}
++	runtime->byte_align = bits / 8;
++	runtime->min_align = frames;
++
++	/* Default sw params */
++	runtime->tstamp_mode = SNDRV_PCM_TSTAMP_NONE;
++	runtime->period_step = 1;
++	runtime->control->avail_min = runtime->period_size;
++	runtime->start_threshold = 1;
++	runtime->stop_threshold = runtime->buffer_size;
++	runtime->silence_threshold = 0;
++	runtime->silence_size = 0;
++	runtime->boundary = runtime->buffer_size;
++	while (runtime->boundary * 2 <= LONG_MAX - runtime->buffer_size)
++		runtime->boundary *= 2;
++
++	/* clear the buffer for avoiding possible kernel info leaks */
++	if (runtime->dma_area &&
++	    !(substream->ops && substream->ops->copy)) {
++		size_t size = runtime->dma_bytes;
++
++		if (runtime->info & SNDRV_PCM_INFO_MMAP)
++			size = PAGE_ALIGN(size);
++		memset(runtime->dma_area, 0, size);
++	}
++}
++EXPORT_SYMBOL(snd_pcm_runtime_set);
++
+ static int snd_pcm_hw_params(struct snd_pcm_substream *substream,
+ 			     struct snd_pcm_hw_params *params)
+ {
+ 	struct snd_pcm_runtime *runtime;
+ 	int err, usecs;
+-	unsigned int bits;
+-	snd_pcm_uframes_t frames;
+ 
+ 	if (PCM_RUNTIME_CHECK(substream))
+ 		return -ENXIO;
+@@ -769,53 +825,7 @@
+ 			goto _error;
+ 	}
+ 
+-	runtime->access = params_access(params);
+-	runtime->format = params_format(params);
+-	runtime->subformat = params_subformat(params);
+-	runtime->channels = params_channels(params);
+-	runtime->rate = params_rate(params);
+-	runtime->period_size = params_period_size(params);
+-	runtime->periods = params_periods(params);
+-	runtime->buffer_size = params_buffer_size(params);
+-	runtime->info = params->info;
+-	runtime->rate_num = params->rate_num;
+-	runtime->rate_den = params->rate_den;
+-	runtime->no_period_wakeup =
+-			(params->info & SNDRV_PCM_INFO_NO_PERIOD_WAKEUP) &&
+-			(params->flags & SNDRV_PCM_HW_PARAMS_NO_PERIOD_WAKEUP);
+-
+-	bits = snd_pcm_format_physical_width(runtime->format);
+-	runtime->sample_bits = bits;
+-	bits *= runtime->channels;
+-	runtime->frame_bits = bits;
+-	frames = 1;
+-	while (bits % 8 != 0) {
+-		bits *= 2;
+-		frames *= 2;
+-	}
+-	runtime->byte_align = bits / 8;
+-	runtime->min_align = frames;
+-
+-	/* Default sw params */
+-	runtime->tstamp_mode = SNDRV_PCM_TSTAMP_NONE;
+-	runtime->period_step = 1;
+-	runtime->control->avail_min = runtime->period_size;
+-	runtime->start_threshold = 1;
+-	runtime->stop_threshold = runtime->buffer_size;
+-	runtime->silence_threshold = 0;
+-	runtime->silence_size = 0;
+-	runtime->boundary = runtime->buffer_size;
+-	while (runtime->boundary * 2 <= LONG_MAX - runtime->buffer_size)
+-		runtime->boundary *= 2;
+-
+-	/* clear the buffer for avoiding possible kernel info leaks */
+-	if (runtime->dma_area && !substream->ops->copy) {
+-		size_t size = runtime->dma_bytes;
+-
+-		if (runtime->info & SNDRV_PCM_INFO_MMAP)
+-			size = PAGE_ALIGN(size);
+-		memset(runtime->dma_area, 0, size);
+-	}
++	snd_pcm_runtime_set(substream, params);
+ 
+ 	snd_pcm_timer_resolution_change(substream);
+ 	snd_pcm_set_state(substream, SNDRV_PCM_STATE_SETUP);
+@@ -2485,7 +2495,7 @@
+ 	return snd_interval_refine(hw_param_interval(params, rule->var), &t);
+ }		
+ 
+-static int snd_pcm_hw_constraints_init(struct snd_pcm_substream *substream)
++int snd_pcm_hw_constraints_init(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
+ 	struct snd_pcm_hw_constraints *constrs = &runtime->hw_constraints;
+@@ -2608,8 +2618,9 @@
+ 		return err;
+ 	return 0;
+ }
++EXPORT_SYMBOL(snd_pcm_hw_constraints_init);
+ 
+-static int snd_pcm_hw_constraints_complete(struct snd_pcm_substream *substream)
++int snd_pcm_hw_constraints_complete(struct snd_pcm_substream *substream)
+ {
+ 	struct snd_pcm_runtime *runtime = substream->runtime;
+ 	struct snd_pcm_hardware *hw = &runtime->hw;
+@@ -2692,6 +2703,7 @@
+ 
+ 	return 0;
+ }
++EXPORT_SYMBOL(snd_pcm_hw_constraints_complete);
+ 
+ static void pcm_release_private(struct snd_pcm_substream *substream)
+ {
+--- linux-6.6.51/sound/soc/atmel/Kconfig	2024-12-05 13:08:00.868913400 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/Kconfig	2024-12-04 16:41:41.474006700 +0900
+@@ -176,4 +176,25 @@
+ 	  2 data lines. The signal path includes an audio grade programmable
+ 	  decimation filter and outputs 24-bit audio words.
+ 
++config SND_MCHP_SOC_ASRC
++	tristate "Microchip ASoC driver for boards using ASRC"
++	depends on OF && (ARCH_AT91 || COMPILE_TEST)
++	select SND_SOC_GENERIC_DMAENGINE_PCM
++	select REGMAP_MMIO
++	help
++	  Say Y or M if you want to add support for Microchip ASRC ASoC
++	  driver on the following Microchip platforms:
++	  - sama7g5
++
++	  The Asynchronous Sample Rate Converter (ASRC) converts the sample
++	  rate of an incoming audio frame without affecting quality. It
++	  supports input and output sampling rates up to 192 kHz.
++
++config SND_MCHP_SOC_ASRC_CARD
++	tristate "Mirochop ASoC Sound Card driver for boards using ASRC"
++	depends on ARCH_AT91 || COMPILE_TEST
++	depends on SND_ATMEL_SOC && SND_MCHP_SOC_ASRC
++	help
++	  Say Y or M if you want to enable the Sound Card driver with support for
++	  Microchip's ASRC.
+ endif
+--- linux-6.6.51/sound/soc/atmel/Makefile	2024-12-05 13:08:00.868913400 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/Makefile	2024-12-04 16:41:41.474006700 +0900
+@@ -8,6 +8,7 @@
+ snd-soc-mchp-spdiftx-objs := mchp-spdiftx.o
+ snd-soc-mchp-spdifrx-objs := mchp-spdifrx.o
+ snd-soc-mchp-pdmc-objs := mchp-pdmc.o
++snd-soc-mchp-asrc-objs := mchp-asrc.o mchp-asrc-dma.o
+ 
+ # pdc and dma need to both be built-in if any user of
+ # ssc is built-in.
+@@ -23,6 +24,7 @@
+ obj-$(CONFIG_SND_MCHP_SOC_SPDIFTX) += snd-soc-mchp-spdiftx.o
+ obj-$(CONFIG_SND_MCHP_SOC_SPDIFRX) += snd-soc-mchp-spdifrx.o
+ obj-$(CONFIG_SND_MCHP_SOC_PDMC) += snd-soc-mchp-pdmc.o
++obj-$(CONFIG_SND_MCHP_SOC_ASRC) += snd-soc-mchp-asrc.o
+ 
+ # AT91 Machine Support
+ snd-soc-sam9g20-wm8731-objs := sam9g20_wm8731.o
+@@ -32,6 +34,7 @@
+ snd-atmel-soc-pdmic-objs := atmel-pdmic.o
+ snd-atmel-soc-tse850-pcm5142-objs := tse850-pcm5142.o
+ snd-soc-mikroe-proto-objs := mikroe-proto.o
++snd-soc-mchp-asrc-card-objs := mchp-asrc-card.o
+ 
+ obj-$(CONFIG_SND_AT91_SOC_SAM9G20_WM8731) += snd-soc-sam9g20-wm8731.o
+ obj-$(CONFIG_SND_ATMEL_SOC_WM8904) += snd-atmel-soc-wm8904.o
+@@ -40,3 +43,4 @@
+ obj-$(CONFIG_SND_ATMEL_SOC_PDMIC) += snd-atmel-soc-pdmic.o
+ obj-$(CONFIG_SND_ATMEL_SOC_TSE850_PCM5142) += snd-atmel-soc-tse850-pcm5142.o
+ obj-$(CONFIG_SND_SOC_MIKROE_PROTO) += snd-soc-mikroe-proto.o
++obj-$(CONFIG_SND_MCHP_SOC_ASRC_CARD) += snd-soc-mchp-asrc-card.o
+--- linux-6.6.51/sound/soc/atmel/atmel_ssc_dai.c	2024-12-05 13:08:00.872902700 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/atmel_ssc_dai.c	2024-12-04 16:41:41.476998600 +0900
+@@ -822,7 +822,7 @@
+ }
+ 
+ #define ATMEL_SSC_FORMATS (SNDRV_PCM_FMTBIT_S8     | SNDRV_PCM_FMTBIT_S16_LE |\
+-			  SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
++			   SNDRV_PCM_FMTBIT_S32_LE)
+ 
+ static const struct snd_soc_dai_ops atmel_ssc_dai_ops = {
+ 	.startup	= atmel_ssc_startup,
+@@ -836,6 +836,7 @@
+ 
+ static struct snd_soc_dai_driver atmel_ssc_dai = {
+ 		.playback = {
++			.stream_name = "Playback",
+ 			.channels_min = 1,
+ 			.channels_max = 2,
+ 			.rates = SNDRV_PCM_RATE_CONTINUOUS,
+@@ -843,6 +844,7 @@
+ 			.rate_max = 384000,
+ 			.formats = ATMEL_SSC_FORMATS,},
+ 		.capture = {
++			.stream_name = "Capture",
+ 			.channels_min = 1,
+ 			.channels_max = 2,
+ 			.rates = SNDRV_PCM_RATE_CONTINUOUS,
+--- /dev/null
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-asrc-card.c	2024-12-04 16:41:41.477995900 +0900
+@@ -0,0 +1,917 @@
++// SPDX-License-Identifier: GPL-2.0
++// ASoC Sound Card driver for Microchip's ASRC
++//
++// Copyright (C) 2018-2022 Microchip Technology Inc. and its subsidiaries
++//
++// Author: Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++#include <dt-bindings/sound/microchip,asrc-card.h>
++#include <linux/device.h>
++#include <linux/export.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++
++#include <sound/control.h>
++#include <sound/pcm_params.h>
++#include <sound/simple_card_utils.h>
++#include <sound/soc.h>
++#include <sound/soc-dai.h>
++#include <sound/soc-dapm.h>
++
++#include "../codecs/ad193x.h"
++#include "../codecs/wm8731.h"
++
++#define MCHP_ASRC_DSPS	4
++#define XTAL_RATE 12288000	/* used for Mikroe Proto board*/
++
++#define MCHP_PERIOD_SIZE_MIN	16384u	/* Workaround, calculated by trial and error */
++
++static const char * const mchp_asrc_ctrl_playback_texts[] = {"Off",
++	"ASRC Playback PCM 1 BE 1", "ASRC Playback PCM 1 BE 2",
++		"ASRC Playback PCM 1 BE 3", "ASRC Playback PCM 1 BE 4",
++	"ASRC Playback PCM 2 BE 1", "ASRC Playback PCM 2 BE 2",
++		"ASRC Playback PCM 2 BE 3", "ASRC Playback PCM 2 BE 4",
++	"ASRC Playback PCM 3 BE 1", "ASRC Playback PCM 3 BE 2",
++		"ASRC Playback PCM 3 BE 3", "ASRC Playback PCM 3 BE 4",
++	"ASRC Playback PCM 4 BE 1", "ASRC Playback PCM 4 BE 2",
++		"ASRC Playback PCM 4 BE 3", "ASRC Playback PCM 4 BE 4",
++};
++
++static const char * const mchp_asrc_ctrl_capture_texts[] = {"Off",
++	"ASRC Capture PCM 1 BE 1", "ASRC Capture PCM 1 BE 2",
++		"ASRC Capture PCM 1 BE 3", "ASRC Capture PCM 1 BE 4",
++	"ASRC Capture PCM 2 BE 1", "ASRC Capture PCM 2 BE 2",
++		"ASRC Capture PCM 2 BE 3", "ASRC Capture PCM 2 BE 4",
++	"ASRC Capture PCM 3 BE 1", "ASRC Capture PCM 3 BE 2",
++		"ASRC Capture PCM 3 BE 3", "ASRC Capture PCM 3 BE 4",
++	"ASRC Capture PCM 4 BE 1", "ASRC Capture PCM 4 BE 2",
++		"ASRC Capture PCM 4 BE 3", "ASRC Capture PCM 4 BE 4",
++};
++
++static const struct soc_enum mchp_asrc_playback_enum =
++	SOC_ENUM_SINGLE_VIRT(ARRAY_SIZE(mchp_asrc_ctrl_playback_texts),
++			     mchp_asrc_ctrl_playback_texts);
++
++static const struct soc_enum mchp_asrc_capture_enum =
++	SOC_ENUM_SINGLE_VIRT(ARRAY_SIZE(mchp_asrc_ctrl_capture_texts),
++			     mchp_asrc_ctrl_capture_texts);
++
++static const struct snd_soc_dapm_route audio_playback_map[MCHP_ASRC_DSPS][MCHP_ASRC_DSPS] = {
++	{
++		{NULL, "ASRC Playback PCM 1 BE 1", "ASRC-Playback 1"},
++		{NULL, "ASRC Playback PCM 2 BE 1", "ASRC-Playback 2"},
++		{NULL, "ASRC Playback PCM 3 BE 1", "ASRC-Playback 3"},
++		{NULL, "ASRC Playback PCM 4 BE 1", "ASRC-Playback 4"},
++	}, {
++		{NULL, "ASRC Playback PCM 1 BE 2", "ASRC-Playback 1"},
++		{NULL, "ASRC Playback PCM 2 BE 2", "ASRC-Playback 2"},
++		{NULL, "ASRC Playback PCM 3 BE 2", "ASRC-Playback 3"},
++		{NULL, "ASRC Playback PCM 4 BE 2", "ASRC-Playback 4"},
++	}, {
++		{NULL, "ASRC Playback PCM 1 BE 3", "ASRC-Playback 1"},
++		{NULL, "ASRC Playback PCM 2 BE 3", "ASRC-Playback 2"},
++		{NULL, "ASRC Playback PCM 3 BE 3", "ASRC-Playback 3"},
++		{NULL, "ASRC Playback PCM 4 BE 3", "ASRC-Playback 4"},
++	}, {
++		{NULL, "ASRC Playback PCM 1 BE 4", "ASRC-Playback 1"},
++		{NULL, "ASRC Playback PCM 2 BE 4", "ASRC-Playback 2"},
++		{NULL, "ASRC Playback PCM 3 BE 4", "ASRC-Playback 3"},
++		{NULL, "ASRC Playback PCM 4 BE 4", "ASRC-Playback 4"},
++	}
++};
++
++static const struct snd_soc_dapm_route audio_capture_map[MCHP_ASRC_DSPS][MCHP_ASRC_DSPS] = {
++	{
++		{"ASRC-Capture 1", "ASRC Capture PCM 1 BE 1", NULL},
++		{"ASRC-Capture 2", "ASRC Capture PCM 2 BE 1", NULL},
++		{"ASRC-Capture 3", "ASRC Capture PCM 3 BE 1", NULL},
++		{"ASRC-Capture 4", "ASRC Capture PCM 4 BE 1", NULL},
++	}, {
++		{"ASRC-Capture 1", "ASRC Capture PCM 1 BE 2", NULL},
++		{"ASRC-Capture 2", "ASRC Capture PCM 2 BE 2", NULL},
++		{"ASRC-Capture 3", "ASRC Capture PCM 3 BE 2", NULL},
++		{"ASRC-Capture 4", "ASRC Capture PCM 4 BE 2", NULL},
++	}, {
++		{"ASRC-Capture 1", "ASRC Capture PCM 1 BE 3", NULL},
++		{"ASRC-Capture 2", "ASRC Capture PCM 2 BE 3", NULL},
++		{"ASRC-Capture 3", "ASRC Capture PCM 3 BE 3", NULL},
++		{"ASRC-Capture 4", "ASRC Capture PCM 4 BE 3", NULL},
++	}, {
++		{"ASRC-Capture 1", "ASRC Capture PCM 1 BE 4", NULL},
++		{"ASRC-Capture 2", "ASRC Capture PCM 2 BE 4", NULL},
++		{"ASRC-Capture 3", "ASRC Capture PCM 3 BE 4", NULL},
++		{"ASRC-Capture 4", "ASRC Capture PCM 4 BE 4", NULL},
++	}
++};
++
++#define PREFIX "microchip,"
++
++struct mchp_dai_priv {
++	int slots;
++	int slot_width;
++};
++
++struct mchp_dai_link_priv {
++	int id;
++	struct mchp_dai_priv cpu;
++	struct mchp_dai_priv codec;
++	int convert_rate;
++	int convert_channels;
++	int convert_format;
++};
++
++struct mchp_card_priv {
++	struct mchp_dai_link_priv *dai_link;
++	int ctrl_playback_no;
++	int ctrl_capture_no;
++};
++
++static int mchp_asrc_card_add_rtm_route(struct snd_soc_card *card,
++					struct snd_soc_pcm_runtime *rtd,
++					struct snd_soc_dapm_route *route,
++					int *aifs_added)
++{
++	struct snd_soc_dapm_context *dapm = &card->dapm;
++	struct mchp_card_priv *card_priv = snd_soc_card_get_drvdata(card);
++	struct snd_soc_dai *cpu_dai;
++	struct snd_kcontrol_new *control;
++	struct snd_soc_dapm_widget *widget;
++	int aifs = card_priv->ctrl_playback_no + card_priv->ctrl_capture_no;
++	char *aux;
++	int i, j, k;
++	int err;
++
++	for_each_rtd_cpu_dais(rtd, i, cpu_dai) {
++		int route_pos;
++		bool codec_playback_avail = false;
++		bool codec_capture_avail = false;
++
++		for (j = 0; j < rtd->dai_link->num_codecs; j++) {
++			struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, j);
++
++			if (codec_dai->driver->playback.stream_name)
++				codec_playback_avail = true;
++			if (codec_dai->driver->capture.stream_name)
++				codec_capture_avail = true;
++		}
++		if (cpu_dai->stream[SNDRV_PCM_STREAM_PLAYBACK].widget && codec_playback_avail) {
++			dev_dbg(card->dev, "CPU DAI %s: playback widget %s\n",
++				cpu_dai->name, cpu_dai->stream[SNDRV_PCM_STREAM_PLAYBACK].widget->name);
++
++			aux = devm_kmalloc(card->dev, 255, GFP_KERNEL);
++			if (!aux)
++				return -ENOMEM;
++			if (cpu_dai->component->name_prefix)
++				snprintf(aux, 255, "%s TX", cpu_dai->component->name_prefix);
++			else
++				snprintf(aux, 255, "%s TX", cpu_dai->name);
++
++			control = devm_kzalloc(card->dev, sizeof(*control), GFP_KERNEL);
++			if (!control)
++				return -ENOMEM;
++			control->iface = SNDRV_CTL_ELEM_IFACE_MIXER;
++			control->name = "Playback Route";
++			control->info = snd_soc_info_enum_double;
++			control->get = snd_soc_dapm_get_enum_double;
++			control->put = snd_soc_dapm_put_enum_double;
++			control->private_value = (unsigned long)&mchp_asrc_playback_enum;
++
++			widget = devm_kzalloc(card->dev, sizeof(*widget), GFP_KERNEL);
++			if (!widget)
++				return -ENOMEM;
++			widget->id = snd_soc_dapm_mux;
++			widget->name = aux;
++			widget->kcontrol_news = control;
++			widget->num_kcontrols = 1;
++			err = snd_soc_dapm_new_controls(dapm, widget, 1);
++			if (err) {
++				dev_err(card->dev, "failed to add widget for %s: %d\n", aux, err);
++				return err;
++			}
++
++			for (j = 0; j < MCHP_ASRC_DSPS; j++) { /* position in ASRC instance */
++				for (k = 0; k < MCHP_ASRC_DSPS; k++) { /* ASRC instance number */
++					route_pos = *aifs_added * MCHP_ASRC_DSPS +
++						j * aifs * MCHP_ASRC_DSPS + k;
++
++					route[route_pos] = audio_playback_map[j][k];
++					route[route_pos].sink = aux;
++					dev_dbg(card->dev, "adding route[%d]: %s -> %s -> %s\n",
++						route_pos, route[route_pos].source,
++						route[route_pos].control,
++						route[route_pos].sink);
++				}
++			}
++			route_pos = aifs * MCHP_ASRC_DSPS * MCHP_ASRC_DSPS + *aifs_added;
++			route[route_pos].source = aux;
++			route[route_pos].sink = cpu_dai->stream[SNDRV_PCM_STREAM_PLAYBACK].widget->name;
++			dev_dbg(card->dev, "adding route[%d]: %s -> %s -> %s\n",
++				route_pos, route[route_pos].source, route[route_pos].control,
++				route[route_pos].sink);
++			(*aifs_added)++;
++		}
++		if (cpu_dai->stream[SNDRV_PCM_STREAM_CAPTURE].widget && codec_capture_avail) {
++			dev_dbg(card->dev, "CPU DAI %s: capture widget %s\n",
++				cpu_dai->name, cpu_dai->stream[SNDRV_PCM_STREAM_CAPTURE].widget->name);
++
++			aux = devm_kmalloc(card->dev, 255, GFP_KERNEL);
++			if (!aux)
++				return -ENOMEM;
++			if (cpu_dai->component->name_prefix)
++				snprintf(aux, 255, "%s RX", cpu_dai->component->name_prefix);
++			else
++				snprintf(aux, 255, "%s RX", cpu_dai->name);
++
++			control = devm_kzalloc(card->dev, sizeof(*control), GFP_KERNEL);
++			if (!control)
++				return -ENOMEM;
++			control->iface = SNDRV_CTL_ELEM_IFACE_MIXER;
++			control->name = "Capture Route";
++			control->info = snd_soc_info_enum_double;
++			control->get = snd_soc_dapm_get_enum_double;
++			control->put = snd_soc_dapm_put_enum_double;
++			control->private_value = (unsigned long)&mchp_asrc_capture_enum;
++			widget = devm_kzalloc(card->dev, sizeof(*widget), GFP_KERNEL);
++			if (!widget)
++				return -ENOMEM;
++			widget->id = snd_soc_dapm_demux;
++			widget->name = aux;
++			widget->kcontrol_news = control;
++			widget->num_kcontrols = 1;
++			err = snd_soc_dapm_new_controls(dapm, widget, 1);
++			if (err) {
++				dev_err(card->dev, "failed to add widget for %s: %d\n", aux, err);
++				return err;
++			}
++			for (j = 0; j < MCHP_ASRC_DSPS; j++) {
++				for (k = 0; k < MCHP_ASRC_DSPS; k++) {
++					route_pos = *aifs_added * MCHP_ASRC_DSPS +
++						j * aifs * MCHP_ASRC_DSPS + k;
++
++					route[route_pos] = audio_capture_map[j][k];
++					route[route_pos].source = aux;
++					dev_dbg(card->dev, "adding route[%d]: %s -> %s -> %s\n",
++						route_pos, route[route_pos].source,
++						route[route_pos].control, route[route_pos].sink);
++				}
++			}
++			route_pos = aifs * MCHP_ASRC_DSPS * MCHP_ASRC_DSPS + *aifs_added;
++			route[route_pos].source = cpu_dai->stream[SNDRV_PCM_STREAM_CAPTURE].widget->name;
++			route[route_pos].sink = aux;
++			dev_dbg(card->dev, "adding route[%d]: %s -> %s -> %s\n", route_pos,
++				route[route_pos].source, route[route_pos].control,
++				route[route_pos].sink);
++			(*aifs_added)++;
++		}
++	}
++	return 0;
++}
++
++static int mchp_asrc_card_late_probe(struct snd_soc_card *card)
++{
++	struct mchp_card_priv *card_priv = snd_soc_card_get_drvdata(card);
++	struct snd_soc_dapm_context *dapm = &card->dapm;
++	struct snd_soc_dapm_route *route;
++#ifdef DEBUG
++	struct snd_soc_dapm_widget *widget;
++#endif
++	int aifs = card_priv->ctrl_playback_no + card_priv->ctrl_capture_no;
++	int aifs_added = 0;
++	int ret;
++	struct snd_soc_pcm_runtime *rtd;
++
++	route = devm_kzalloc(card->dev, sizeof(*route) *
++					(MCHP_ASRC_DSPS * MCHP_ASRC_DSPS + 1) *
++					aifs, GFP_KERNEL);
++	if (!route)
++		return -ENOMEM;
++
++	for_each_card_rtds(card, rtd) {
++		if (!rtd->dai_link->no_pcm)
++			continue;
++		ret = mchp_asrc_card_add_rtm_route(card, rtd, route, &aifs_added);
++		if (ret < 0)
++			return ret;
++	}
++
++	dev_dbg(card->dev, "Adding %d routes from total of %d\n", aifs, aifs_added);
++	ret = snd_soc_dapm_add_routes(dapm, route, aifs_added *
++				      (MCHP_ASRC_DSPS * MCHP_ASRC_DSPS + 1));
++	if (ret < 0) {
++		dev_err(card->dev, "failed to add routes: %d\n", ret);
++		return ret;
++	}
++	dev_dbg(card->dev, "Added routes\n");
++
++	dev_dbg(card->dev, "widgets available:\n");
++#ifdef DEBUG
++	for_each_card_widgets(dapm->card, widget)
++		dev_dbg(card->dev, "%s\n", widget->name);
++#endif
++
++	return 0;
++}
++
++static int mchp_asrc_card_be_dai_link_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_card *card = rtd->card;
++	struct mchp_card_priv *card_priv = snd_soc_card_get_drvdata(card);
++	int i;
++	int codec_playback_avail = false;
++	int codec_capture_avail = false;
++
++	if (cpu_dai->component)
++		dev_dbg(card->dev, "%s: prefix %s\n", __func__, cpu_dai->component->name_prefix);
++	else
++		dev_dbg(card->dev, "%s: no prefix for DAI %s\n", __func__, cpu_dai->name);
++
++	for (i = 0; i < rtd->dai_link->num_codecs; i++) {
++		struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, i);
++
++		if (codec_dai->driver->playback.stream_name)
++			codec_playback_avail = true;
++		if (codec_dai->driver->capture.stream_name)
++			codec_capture_avail = true;
++	}
++	if (cpu_dai->driver->playback.stream_name && codec_playback_avail)
++		card_priv->ctrl_playback_no++;
++
++	if (cpu_dai->driver->capture.stream_name && codec_capture_avail)
++		card_priv->ctrl_capture_no++;
++
++	return 0;
++}
++
++static int mchp_asoc_card_fixup(struct snd_soc_pcm_runtime *rtd, struct snd_pcm_hw_params *params)
++{
++	struct snd_soc_card *card = rtd->card;
++	struct mchp_card_priv *card_priv = snd_soc_card_get_drvdata(card);
++	struct mchp_dai_link_priv *priv = card_priv->dai_link;
++	struct snd_interval *rate, *period_size;
++	struct snd_mask *mask;
++	struct snd_interval *ct = hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
++	int i;
++
++	for (i = 0; i < card->num_links; i++, priv++) {
++		if (rtd->dai_link->id == priv->id)
++			break;
++	}
++	if (i == card->num_links) {
++		dev_err(card->dev, "priv not found for %s\n", rtd->dai_link->name);
++		return -EINVAL;
++	}
++
++	ct->min = priv->convert_channels;
++	ct->max = priv->convert_channels;
++
++	rate = hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE);
++	rate->max = priv->convert_rate;
++	rate->min = priv->convert_rate;
++
++	mask = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
++	snd_mask_none(mask);
++	snd_mask_set(mask, priv->convert_format);
++
++	/* set workaround to avoid ASRC noise issue */
++	period_size = hw_param_interval(params, SNDRV_PCM_HW_PARAM_PERIOD_BYTES);
++	period_size->min = max(period_size->min, MCHP_PERIOD_SIZE_MIN);
++
++	return 0;
++}
++
++static int mchp_asrc_card_dai_link_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
++	struct snd_soc_dai_link *dai_link = rtd->dai_link;
++	struct snd_soc_card *card = rtd->card;
++	unsigned int i;
++	int err = 0;
++	struct mchp_card_priv *card_priv = snd_soc_card_get_drvdata(card);
++	struct mchp_dai_link_priv *priv = card_priv->dai_link;
++
++	for (i = 0; i < card->num_links; i++, priv++) {
++		if (dai_link->id == priv->id)
++			break;
++	}
++	if (i == card->num_links) {
++		dev_err(card->dev, "private not found for %s\n", dai_link->name);
++		return -EINVAL;
++	}
++
++	dev_dbg(card->dev, "Found priv id %d, cpu slot %d, codec slot %d\n",
++		priv->id, priv->cpu.slots, priv->codec.slots);
++
++	/* get TDM values */
++	if (priv->cpu.slots) {
++		dev_dbg(card->dev, "Setting TDM slot %d, width %d in %s node\n",
++			priv->cpu.slots, priv->cpu.slot_width, cpu_dai->name);
++		err = snd_soc_dai_set_tdm_slot(cpu_dai,
++					       GENMASK(priv->cpu.slots - 1, 0),
++					       GENMASK(priv->cpu.slots - 1, 0),
++					       priv->cpu.slots,
++					       priv->cpu.slot_width);
++		if (err) {
++			dev_err(card->dev, "Failed to set TDM params for %s node: %d\n",
++				cpu_dai->name, err);
++		}
++	}
++
++	for (i = 0; i < rtd->dai_link->num_codecs; i++) {
++		struct snd_soc_dai *codec_dai = asoc_rtd_to_codec(rtd, i);
++
++		/* Mikroe Proto Board uses a 12.288MhZ XTAL */
++		if (strstr(codec_dai->driver->name, "wm8731")) {
++			dev_dbg(card->dev, "setting sysclk for %s\n",
++				codec_dai->driver->name);
++			err = snd_soc_dai_set_sysclk(codec_dai, WM8731_SYSCLK_XTAL,
++						     XTAL_RATE, SND_SOC_CLOCK_IN);
++			if (err < 0) {
++				dev_err(card->dev, "Failed to set WM8731 SYSCLK: %d\n",
++					err);
++			}
++		}
++		if (priv->codec.slots) {
++			dev_info(card->dev, "Setting TDM slot %d, width %d in %s node\n",
++				 priv->codec.slots, priv->codec.slot_width,
++				 codec_dai->name);
++			err = snd_soc_dai_set_tdm_slot(codec_dai,
++						       GENMASK(priv->codec.slots - 1, 0),
++						       GENMASK(priv->codec.slots - 1, 0),
++						       priv->codec.slots,
++						       priv->codec.slot_width);
++			if (err)
++				dev_err(card->dev, "Failed to set TDM params for %s node: %d\n",
++					codec_dai->name, err);
++		}
++	}
++
++	return 0;
++}
++
++static int mchp_asoc_card_parse_convert(struct device *dev, struct device_node *np,
++					char *prefix,
++					struct mchp_dai_link_priv *priv)
++{
++	char prop[128];
++	int ret;
++
++	if (!prefix)
++		prefix = "";
++
++	/* sampling rate convert */
++	snprintf(prop, sizeof(prop), "%s%s", prefix, "convert-rate");
++	ret = of_property_read_u32(np, prop, &priv->convert_rate);
++	if (ret < 0) {
++		dev_err(dev, "unable to get convert-rate for %s", np->full_name);
++		return ret;
++	}
++	if (priv->convert_rate < 8000 || priv->convert_rate > 192000) {
++		dev_err(dev, "invalid %sconvert-rate value for %s: %d",
++			prefix, np->full_name, priv->convert_rate);
++		return -EINVAL;
++	}
++	dev_dbg(dev, "convert-rate for %s: %d\n", np->full_name, priv->convert_rate);
++
++	/* channels transfer */
++	snprintf(prop, sizeof(prop), "%s%s", prefix, "convert-channels");
++	ret = of_property_read_u32(np, prop, &priv->convert_channels);
++	if (ret < 0) {
++		dev_err(dev, "unable to get %sconvert-channels for %s", prefix,
++			np->full_name);
++		return ret;
++	}
++	if (priv->convert_channels < 1 || priv->convert_channels > 8) {
++		dev_err(dev, "invalid %sconvert-channels value for %s: %d",
++			prefix, np->full_name, priv->convert_channels);
++		return -EINVAL;
++	}
++	dev_dbg(dev, "convert-channels for %s: %d\n", np->full_name,
++		priv->convert_channels);
++
++	/* sample format */
++	snprintf(prop, sizeof(prop), "%s%s", prefix, "convert-sample-format");
++	ret = of_property_read_u32(np, prop, &priv->convert_format);
++	if (ret < 0) {
++		dev_err(dev, "unable to get convert-sample-format for %s", np->full_name);
++		return ret;
++	}
++	if (priv->convert_format != MCHP_ASRC_PCM_FORMAT_S8 &&
++	    priv->convert_format != MCHP_ASRC_PCM_FORMAT_S16_LE &&
++	    priv->convert_format != MCHP_ASRC_PCM_FORMAT_S24_LE &&
++	    priv->convert_format != MCHP_ASRC_PCM_FORMAT_S32_LE) {
++		dev_err(dev, "invalid %sconvert-sample-format value for %s: %d",
++			prefix, np->full_name, priv->convert_format);
++		return -EINVAL;
++	}
++	dev_dbg(dev, "convert-sample-format for %s: %d\n", np->full_name,
++		priv->convert_format);
++
++	return 0;
++}
++
++static void mchp_parse_tdm_params(struct device *dev, struct device_node *np,
++				  struct mchp_dai_priv *priv)
++{
++	int err;
++
++	if (!np || !priv)
++		return;
++
++	err = snd_soc_of_parse_tdm_slot(np, NULL, NULL, &priv->slots,
++					&priv->slot_width);
++	if (err) {
++		dev_dbg(dev,
++			"TDM slot num/width not available in %s node: %d\n",
++			np->name, err);
++	} else {
++		dev_dbg(dev, "TDM slot %d, width %d in %s node\n",
++			priv->slots, priv->slot_width, np->name);
++	}
++}
++
++static void mchp_asrc_card_of_put(struct snd_soc_card *card)
++{
++	int i;
++
++	for (i = 0; i < card->num_links; i++) {
++		struct snd_soc_dai_link *dai_link = &card->dai_link[i];
++
++		if (dai_link->no_pcm)
++			continue;
++
++		of_node_put(dai_link->cpus->of_node);
++		snd_soc_of_put_dai_link_codecs(dai_link);
++	}
++}
++
++static int mchp_asrc_card_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	struct device_node *node;
++	struct snd_soc_card *card;
++	struct mchp_card_priv *priv;
++	struct snd_soc_dai_link *dai_link;
++	int err, num_links, num_dai_links;
++	int be_index = 0;
++	int i;
++	int asrc_fe_no = 0;
++	struct of_phandle_args *asrc_args;
++
++	if (!np) {
++		dev_err(&pdev->dev, "No device node supplied\n");
++		return -EINVAL;
++	}
++
++	card = devm_kzalloc(&pdev->dev, sizeof(*card), GFP_KERNEL);
++	if (!card)
++		return -ENOMEM;
++
++	node = of_get_child_by_name(np, PREFIX "dai-link");
++	if (node) {
++		of_node_put(node);
++		node = NULL;
++		num_links = of_get_available_child_count(np);
++	} else {
++		dev_err(&pdev->dev, "no DT dai-links found\n");
++		return -EINVAL;
++	}
++
++	/* allocate private structure for BEs */
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++	priv->dai_link = devm_kzalloc(&pdev->dev,
++				      sizeof(*priv->dai_link) * num_links,
++				      GFP_KERNEL);
++	if (!priv->dai_link)
++		return -ENOMEM;
++
++	snd_soc_card_set_drvdata(card, priv);
++
++	asrc_fe_no = of_count_phandle_with_args(np, PREFIX "audio-asrc", "#sound-dai-cells");
++	if (asrc_fe_no < 0) {
++		dev_info(&pdev->dev, "no ASRC instances found\n");
++		asrc_fe_no = 0;
++	} else {
++		dev_info(&pdev->dev, "ASRC %d FEs\n", asrc_fe_no);
++	}
++
++	if (asrc_fe_no) {
++		asrc_args = devm_kmalloc(&pdev->dev, sizeof(*asrc_args) * asrc_fe_no,
++					 GFP_KERNEL);
++		if (!asrc_args)
++			return -ENOMEM;
++
++		/* all DAI links will also get a BE */
++		num_dai_links = num_links * 2;
++	} else {
++		num_dai_links = num_links;
++	}
++
++	num_dai_links += asrc_fe_no;
++
++	card->dai_link = devm_kzalloc(&pdev->dev,
++				      sizeof(*card->dai_link) * num_dai_links,
++				      GFP_KERNEL);
++	if (!card->dai_link)
++		return -ENOMEM;
++
++	dai_link = card->dai_link;
++
++	for (i = 0; i < asrc_fe_no; i++) {
++		struct snd_soc_dai_link_component *comp;
++		struct device_node *asrc;
++
++		err = of_parse_phandle_with_args(np, PREFIX "audio-asrc",
++						 "#sound-dai-cells", i, &asrc_args[i]);
++		if (err < 0) {
++			if (err == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++
++			dev_warn(&pdev->dev, "ASRC DT phandle %d not found: %d\n",
++				 i, err);
++			continue;
++		}
++
++		dev_dbg(&pdev->dev, "ASRC DT phandle %d found: %s\n",
++			i, asrc_args[i].np->name);
++
++		asrc = asrc_args[i].np;
++		comp = devm_kzalloc(&pdev->dev, 3 * sizeof(*comp), GFP_KERNEL);
++		if (!comp) {
++			of_node_put(asrc);
++			return -ENOMEM;
++		}
++
++		dai_link->cpus = &comp[0];
++		dai_link->codecs = &comp[1];
++		dai_link->platforms = &comp[2];
++
++		dai_link->cpus->of_node = asrc;
++		dai_link->platforms->of_node = asrc;
++		dai_link->codecs->name = "snd-soc-dummy";
++		dai_link->codecs->dai_name = "snd-soc-dummy-dai";
++		dai_link->num_cpus = 1;
++		dai_link->num_codecs = 1;
++		dai_link->num_platforms = 1;
++
++		dai_link->dpcm_playback = 1;
++		dai_link->dpcm_capture = 1;
++		dai_link->dynamic = 1;
++		dai_link->dpcm_loopback = 1;
++		dai_link->id = card->num_links;
++		dai_link->trigger[SNDRV_PCM_STREAM_PLAYBACK] =
++			dai_link->trigger[SNDRV_PCM_STREAM_CAPTURE] = SND_SOC_DPCM_TRIGGER_PRE;
++		err = snd_soc_get_dai_name(&asrc_args[i], &dai_link->cpus->dai_name);
++		if (err) {
++			if (err == -EPROBE_DEFER) {
++				of_node_put(asrc);
++				return -EPROBE_DEFER;
++			}
++			dev_err(&pdev->dev, "error getting asrc dai name\n");
++		} else {
++			dev_dbg(&pdev->dev, "asrc cpu_dai_name %s\n",
++				dai_link->cpus->dai_name);
++			dai_link->name = dai_link->cpus->dai_name;
++			dai_link->stream_name = dai_link->cpus->dai_name;
++		}
++		dev_info(&pdev->dev, "Found DPCM FE: %s\n", dai_link->cpus->dai_name);
++
++		of_node_put(asrc);
++		dai_link++;
++		card->num_links++;
++	}
++
++	for_each_available_child_of_node(np, node) {
++		struct device_node *cpu;
++		struct device_node *codec;
++		int index;
++		char *name;
++		struct snd_soc_dai_link_component *comp;
++
++		/* add normal PCM first */
++		comp = devm_kzalloc(&pdev->dev, 3 * sizeof(*comp), GFP_KERNEL);
++		if (!comp)
++			return -ENOMEM;
++
++		dai_link->cpus = &comp[0];
++		dai_link->codecs = &comp[1];
++		dai_link->platforms = &comp[2];
++		dai_link->num_cpus = 1;
++		dai_link->num_codecs = 1;
++		dai_link->num_platforms = 1;
++
++		cpu = of_get_child_by_name(node, "cpu");
++		if (!cpu) {
++			dev_err(&pdev->dev, "no cpu DT node found\n");
++			continue;
++		}
++		mchp_parse_tdm_params(&pdev->dev, cpu, &priv->dai_link[be_index].cpu);
++		codec = of_get_child_by_name(node, "codec");
++		if (!codec) {
++			dev_err(&pdev->dev, "no codec DT node found\n");
++			of_node_put(cpu);
++			continue;
++		}
++		mchp_parse_tdm_params(&pdev->dev, codec, &priv->dai_link[be_index].codec);
++		err = asoc_simple_parse_daifmt(&pdev->dev, node, codec, PREFIX,
++					       &dai_link->dai_fmt);
++		if (err < 0) {
++			of_node_put(codec);
++			of_node_put(cpu);
++			if (err == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++			dev_err(&pdev->dev, "error getting daifmt from DT\n");
++			continue;
++		}
++
++		dai_link->cpus->of_node = of_parse_phandle(cpu, "sound-dai", 0);
++		if (!dai_link->cpus->of_node) {
++			dev_err(&pdev->dev, "error getting cpu phandle for %s\n",
++				cpu->name);
++			of_node_put(codec);
++			of_node_put(cpu);
++			continue;
++		}
++		err = snd_soc_of_get_dai_link_codecs(&pdev->dev, codec, dai_link);
++		if (err) {
++			of_node_put(dai_link->cpus->of_node);
++			of_node_put(codec);
++			of_node_put(cpu);
++			if (err == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++			dev_err(&pdev->dev, "error getting DAI codecs: %d\n", err);
++			continue;
++		}
++
++		err = snd_soc_of_get_dai_name(cpu, &dai_link->cpus->dai_name, 0);
++		if (err) {
++			snd_soc_of_put_dai_link_codecs(dai_link);
++			of_node_put(dai_link->cpus->of_node);
++			of_node_put(codec);
++			of_node_put(cpu);
++			if (err == -EPROBE_DEFER)
++				return -EPROBE_DEFER;
++			dev_err(&pdev->dev, "error getting cpu dai name: %d\n", err);
++			continue;
++		}
++		dev_dbg(&pdev->dev, "current cpu_dai_name %s\n",
++			dai_link->cpus->dai_name);
++
++		name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "%s -",
++				      dai_link->cpus->dai_name);
++		if (!name) {
++			snd_soc_of_put_dai_link_codecs(dai_link);
++			of_node_put(dai_link->cpus->of_node);
++			of_node_put(codec);
++			of_node_put(cpu);
++			return -ENOMEM;
++		}
++
++		for (index = 0;
++		     index < dai_link->num_codecs;
++		     index++) {
++			name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "%s %s",
++					      name,
++					      dai_link->codecs[index].dai_name);
++			if (!name) {
++				snd_soc_of_put_dai_link_codecs(dai_link);
++				of_node_put(dai_link->cpus->of_node);
++				of_node_put(codec);
++				of_node_put(cpu);
++				return -ENOMEM;
++			}
++		}
++
++		dai_link->name = name;
++		dai_link->stream_name = name;
++		dai_link->init = &mchp_asrc_card_dai_link_init;
++		dai_link->id = card->num_links;
++		dai_link->platforms->of_node = dai_link->cpus->of_node;
++		priv->dai_link[be_index].id = card->num_links;
++
++		dai_link++;
++		card->num_links++;
++
++		/*
++		 * if the convert properties are not available, do not create a
++		 * BE DAI Link for this DAI
++		 */
++		err = mchp_asoc_card_parse_convert(&pdev->dev, node, PREFIX,
++						   &priv->dai_link[be_index]);
++		if (err) {
++			dev_info(&pdev->dev, "not registering DAI %s as BE\n",
++				 (dai_link - 1)->name);
++		}
++		if (!asrc_fe_no || err) {
++			be_index++;
++			of_node_put(codec);
++			of_node_put(cpu);
++			continue;
++		}
++
++		/* add the DPCM BE */
++
++		memcpy(dai_link, &card->dai_link[card->num_links - 1], sizeof(*dai_link));
++
++		name = devm_kasprintf(&pdev->dev, GFP_KERNEL, "BE %s",
++				      card->dai_link[card->num_links - 1].name);
++		dai_link->name = name;
++		dai_link->stream_name = name;
++		dai_link->no_pcm = 1;
++		dai_link->ignore_suspend = 1;
++		dai_link->ignore_pmdown_time = 1;
++		dai_link->init = &mchp_asrc_card_be_dai_link_init;
++		dai_link->trigger[SNDRV_PCM_STREAM_PLAYBACK] =
++			dai_link->trigger[SNDRV_PCM_STREAM_CAPTURE] = SND_SOC_DPCM_TRIGGER_POST;
++
++		if (strstr(name, "spdiftx")) {
++			dai_link->dpcm_playback = 1;
++		} else if (strstr(name, "spdifrx")) {
++			dai_link->dpcm_capture = 1;
++		} else if (strstr(name, "pdmc")) {
++			dai_link->dpcm_capture = 1;
++		} else {
++			dai_link->dpcm_playback = 1;
++			dai_link->dpcm_capture = 1;
++		}
++		dai_link->be_hw_params_fixup = mchp_asoc_card_fixup;
++		dev_info(&pdev->dev, "Found DPCM BE: %s, id %d\n",
++			 dai_link->name, dai_link->id);
++
++		of_node_put(codec);
++		of_node_put(cpu);
++
++		dai_link++;
++		card->num_links++;
++		be_index++;
++	}
++
++	if (!card->num_links) {
++		dev_err(&pdev->dev, "no legit dai-links found\n");
++		return -EINVAL;
++	}
++	dev_dbg(&pdev->dev, "Found %d links\n", card->num_links);
++
++	card->dev = &pdev->dev;
++	card->owner = THIS_MODULE;
++
++	err = snd_soc_of_parse_card_name(card, PREFIX "model");
++	if (err) {
++		dev_err(&pdev->dev, PREFIX "model not found in DT\n");
++		goto _dai_link_put;
++	}
++
++	if (of_property_read_bool(np, PREFIX "audio-routing"))
++		snd_soc_of_parse_audio_routing(card, PREFIX "audio-routing");
++
++	priv->ctrl_playback_no = 0;
++	priv->ctrl_capture_no = 0;
++
++	card->late_probe = mchp_asrc_card_late_probe;
++
++	err = snd_soc_register_card(card);
++	if (err) {
++		dev_err(&pdev->dev,
++			"ASoc: Platform device allocation failed: %d\n", err);
++		goto _dai_link_put;
++	}
++
++_dai_link_put:
++	mchp_asrc_card_of_put(card);
++
++	return err;
++}
++
++static int mchp_asrc_card_remove(struct platform_device *pdev)
++{
++	struct snd_soc_card *card = platform_get_drvdata(pdev);
++
++	snd_soc_unregister_card(card);
++
++	return 0;
++}
++
++static const struct of_device_id mchp_asrc_card_of_match[] = {
++	{ .compatible = "microchip,asrc-card",},
++	{},
++};
++MODULE_DEVICE_TABLE(of, mchp_asrc_card_of_match);
++
++static struct platform_driver mchp_asrc_card_driver = {
++	.driver = {
++		.name = "mchp-asrc-card",
++		.of_match_table = of_match_ptr(mchp_asrc_card_of_match),
++	},
++	.probe = mchp_asrc_card_probe,
++	.remove = mchp_asrc_card_remove,
++};
++module_platform_driver(mchp_asrc_card_driver);
++
++/* Module information */
++MODULE_AUTHOR("Codrin Ciubotariu <codrin.ciubotariu@microchip.com>");
++MODULE_DESCRIPTION("ALSA SoC machine driver for Microchip's ASRC");
++MODULE_LICENSE("GPL v2");
+--- /dev/null
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-asrc-dma.c	2024-12-04 16:41:41.478993400 +0900
+@@ -0,0 +1,975 @@
++// SPDX-License-Identifier: GPL-2.0
++// ASoC Platform (DMA) driver for Microchip ASRC
++//
++// Copyright (C) 2018-2022 Microchip Technology Inc. and its subsidiaries
++//
++// Author: Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++#include <linux/dma-mapping.h>
++#include <linux/module.h>
++#include <sound/dmaengine_pcm.h>
++#include <sound/pcm_params.h>
++
++#include "mchp-asrc.h"
++
++#define MCHP_ASRC_DMAENGINE_PCM_DRV_NAME  "mchp_snd_asrc_dmaengine_pcm"
++#define MCHP_ASRC_DMABUF_SIZE	(512 * 1024)
++
++struct mchp_asrc_dma_be_priv {
++	struct device				*dev;
++	struct of_phandle_args			*phandle;
++	struct snd_soc_dpcm			*dpcm;
++	struct dma_chan				*chan;
++	struct dma_async_tx_descriptor		*desc;
++	struct list_head			list;
++};
++
++struct mchp_asrc_dma_priv {
++	struct device				*dev;
++	struct list_head			dma_in_head;
++	struct list_head			dma_out_head;
++	unsigned int				refcount;
++	/* used for FE */
++	dma_cookie_t				cookie;
++	unsigned int				pos;
++	unsigned int				no_residue: 1;
++};
++
++static struct snd_pcm_hardware mchp_asrc_hw = {
++	.info = SNDRV_PCM_INFO_INTERLEAVED |
++		SNDRV_PCM_INFO_MMAP |
++		SNDRV_PCM_INFO_MMAP_VALID,
++	.buffer_bytes_max = MCHP_ASRC_DMABUF_SIZE,
++	.period_bytes_min = 256,
++	.periods_min = 2,
++	.periods_max = UINT_MAX,
++	.fifo_size = 0,
++};
++
++static inline struct mchp_asrc_dma_priv *
++mchp_asrc_substream_to_prtd(const struct snd_pcm_substream *substream)
++{
++	return substream->runtime->private_data;
++}
++
++static void
++snd_asrc_pcm_refine_runtime_hwparams(struct snd_pcm_substream *substream,
++				     struct snd_pcm_hardware *hw, struct dma_slave_caps *dma_caps)
++{
++	u32 addr_widths = BIT(DMA_SLAVE_BUSWIDTH_1_BYTE) |
++			  BIT(DMA_SLAVE_BUSWIDTH_2_BYTES) |
++			  BIT(DMA_SLAVE_BUSWIDTH_4_BYTES);
++	snd_pcm_format_t i;
++
++	if (dma_caps) {
++		if (dma_caps->cmd_pause && dma_caps->cmd_resume)
++			hw->info |= SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_RESUME;
++		if (dma_caps->residue_granularity <= DMA_RESIDUE_GRANULARITY_SEGMENT)
++			hw->info |= SNDRV_PCM_INFO_BATCH;
++
++		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
++			addr_widths = dma_caps->dst_addr_widths;
++		else
++			addr_widths = dma_caps->src_addr_widths;
++	}
++
++	pcm_for_each_format(i) {
++		int bits = snd_pcm_format_physical_width(i);
++
++		/*
++		 * Enable only samples with DMA supported physical
++		 * widths
++		 */
++		switch (bits) {
++		case 8:
++		case 16:
++		case 24:
++		case 32:
++		case 64:
++			if (addr_widths & (1 << (bits / 8)))
++				hw->formats |= pcm_format_to_bits(i);
++			break;
++		default:
++			/* Unsupported types */
++			break;
++		}
++	}
++}
++
++static int mchp_asrc_dma_open(struct snd_soc_component *component,
++			      struct snd_pcm_substream *substream)
++{
++	struct dma_slave_caps dma_caps;
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct device *dev = component->dev;
++	struct dma_chan *tmp_chan;
++	struct mchp_asrc_dma_priv *dma_priv;
++	bool is_playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	char tmp_str[4];
++	int ret;
++	int i;
++
++	if (runtime->private_data) {
++		dma_priv = runtime->private_data;
++		dma_priv->refcount++;
++		dev_dbg(dev, "%s(): DMA private data already allocated\n", __func__);
++		return 0;
++	}
++
++	dma_priv = kzalloc(sizeof(*dma_priv), GFP_KERNEL);
++	if (!dma_priv)
++		return -ENOMEM;
++	dma_priv->dev = dev;
++	INIT_LIST_HEAD(&dma_priv->dma_in_head);
++	INIT_LIST_HEAD(&dma_priv->dma_out_head);
++	dma_priv->refcount++;
++	runtime->private_data = dma_priv;
++
++	ret = snd_pcm_hw_constraint_integer(substream->runtime, SNDRV_PCM_HW_PARAM_PERIODS);
++	if (ret < 0) {
++		dev_err(dev, "snd_pcm_hw_constraint_integer() failed for HW_PARAM_PERIODS: %d\n",
++			ret);
++		goto __out_data_free;
++	}
++
++	/* since we are not preallocating the DMA channels, we use a
++	 * dummy DMA channel, just to get the capabilities
++	 */
++	for (i = 0; i < MCHP_ASRC_NB_STEREO_CH; i++) {
++		sprintf(tmp_str, "%cx%d",  is_playback ? 't' : 'r', i);
++
++		tmp_chan = dma_request_chan(dev, tmp_str);
++		if (!IS_ERR(tmp_chan))
++			break;
++	}
++	if (i == MCHP_ASRC_NB_STEREO_CH) {
++		dev_err(dev, "no free DMA %s channels\n", is_playback ? "tx" : "rx");
++		ret = -EINVAL;
++		goto __out_data_free;
++	}
++
++	mchp_asrc_hw.period_bytes_max = dma_get_max_seg_size(tmp_chan->device->dev);
++	ret = dma_get_slave_caps(tmp_chan, &dma_caps);
++	if (ret == 0) {
++		dma_priv->no_residue = dma_caps.residue_granularity ==
++			DMA_RESIDUE_GRANULARITY_DESCRIPTOR;
++
++		/* Refine mchp_asrc_hw according to caps of DMA */
++		snd_asrc_pcm_refine_runtime_hwparams(substream, &mchp_asrc_hw, &dma_caps);
++	} else {
++		snd_asrc_pcm_refine_runtime_hwparams(substream, &mchp_asrc_hw, NULL);
++	}
++
++	ret = snd_soc_set_runtime_hwparams(substream, &mchp_asrc_hw);
++	if (ret < 0) {
++		dev_err(dev, "runtime_hwparams() failed: %d\n", ret);
++		goto __out_release_chan;
++	}
++
++	dma_release_channel(tmp_chan);
++
++	return 0;
++
++__out_release_chan:
++	dma_release_channel(tmp_chan);
++__out_data_free:
++	dma_priv->refcount--;
++	if (!dma_priv->refcount) {
++		kfree(dma_priv);
++		runtime->private_data = NULL;
++	}
++
++	return ret;
++}
++
++static int mchp_asrc_dma_close(struct snd_soc_component *component,
++			       struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct mchp_asrc_dma_priv *dma_priv = runtime->private_data;
++
++	dma_priv->refcount--;
++	if (!dma_priv->refcount) {
++		kfree(dma_priv);
++		runtime->private_data = NULL;
++	}
++
++	return 0;
++}
++
++static void mchp_asrc_start_handle(unsigned long data)
++{
++	struct mchp_asrc_dma_priv *dma_priv = (struct mchp_asrc_dma_priv *)data;
++	struct mchp_asrc_dma_be_priv *dma_be_priv;
++
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_in_head, list) {
++		if (unlikely(!dma_be_priv->desc)) {
++			dev_err(dma_priv->dev, "in BE %s DMA descriptor not initialized\n",
++				dma_be_priv->phandle ? dma_be_priv->phandle->np->name :
++						       "front-end");
++			return;
++		}
++		dev_dbg(dma_priv->dev, "%s() DMA: in BE channel %s for %s\n", __func__,
++			dma_be_priv->desc->chan->name,
++			dma_be_priv->phandle ? dma_be_priv->phandle->np->name : "front-end");
++	}
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_out_head, list) {
++		if (unlikely(!dma_be_priv->desc)) {
++			dev_err(dma_priv->dev, "out BE %s DMA descriptor not initialized\n",
++				dma_be_priv->phandle ? dma_be_priv->phandle->np->name :
++						       "front-end");
++			return;
++		}
++		dev_dbg(dma_priv->dev, "%s() DMA: out BE channel %s for %s\n", __func__,
++			dma_be_priv->desc->chan->name,
++			dma_be_priv->phandle ? dma_be_priv->phandle->np->name : "front-end");
++	}
++
++	/* start transmit channel DMAs */
++	dev_info(dma_priv->dev, "ASRC IN AIF(s):\n");
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_in_head, list) {
++		if (!dma_be_priv->phandle) {
++			dma_priv->cookie = dmaengine_submit(dma_be_priv->desc);
++			dev_info(dma_priv->dev, "\tfront-end\n");
++		} else {
++			dmaengine_submit(dma_be_priv->desc);
++			dev_info(dma_priv->dev, "\t%s, %d channels\n",
++				 dma_be_priv->phandle->np->full_name,
++				 params_channels(&dma_be_priv->dpcm->be->dpcm[SNDRV_PCM_STREAM_CAPTURE].hw_params));
++		}
++	}
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_in_head, list)
++		dma_async_issue_pending(dma_be_priv->desc->chan);
++
++	/* start receive channel DMAs */
++	dev_info(dma_priv->dev, "ASRC OUT AIF(s):\n");
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_out_head, list) {
++		if (!dma_be_priv->phandle) {
++			dma_priv->cookie = dmaengine_submit(dma_be_priv->desc);
++			dev_info(dma_priv->dev, "\tfront-end\n");
++		} else {
++			dmaengine_submit(dma_be_priv->desc);
++			dev_info(dma_priv->dev, "\t%s, %d channels\n",
++				 dma_be_priv->phandle->np->full_name,
++				 params_channels(&dma_be_priv->dpcm->be->dpcm[SNDRV_PCM_STREAM_PLAYBACK].hw_params));
++		}
++	}
++	list_for_each_entry(dma_be_priv, &dma_priv->dma_out_head, list)
++		dma_async_issue_pending(dma_be_priv->desc->chan);
++}
++
++static int mchp_asrc_dmaengine_pcm_prepare_slave_config(struct device *dev,
++							struct snd_pcm_substream *substream,
++							struct snd_pcm_hw_params *params,
++							struct snd_dmaengine_dai_dma_data *dma_data,
++							struct dma_slave_config *slave_config)
++{
++	int ret;
++
++	ret = snd_hwparams_to_dma_slave_config(substream, params, slave_config);
++	if (ret)
++		return ret;
++
++	snd_dmaengine_pcm_set_config_from_dai_data(substream, dma_data, slave_config);
++
++	dev_dbg(dev,
++		"%s() FE AIF dir %s, src addr %pap, dst addr: %pap, src_addr_width %d, dst_addr_width %d, src maxburst %u, dst maxburst %u\n",
++		__func__,
++		slave_config->direction == DMA_MEM_TO_DEV ? "DMA_MEM_TO_DEV" :
++							"DMA_DEV_TO_MEM",
++		&slave_config->src_addr, &slave_config->dst_addr,
++		slave_config->src_addr_width, slave_config->dst_addr_width,
++		slave_config->src_maxburst, slave_config->dst_maxburst);
++
++	return 0;
++}
++
++static int
++mchp_asrc_be_dmaengine_slave_config(struct mchp_asrc_dmaengine_dai_dma *dma,
++				    struct mchp_asrc_dma_be_priv *dma_be_priv,
++				    int is_playback)
++{
++	struct dma_slave_config config_be = {0};
++	struct snd_soc_dpcm *dpcm = dma_be_priv->dpcm;
++	struct snd_soc_pcm_runtime *be = dpcm->be;
++	struct snd_soc_dai *dai = asoc_rtd_to_cpu(be, 0);
++	struct device *dev = dma_be_priv->dev;
++	struct mchp_asrc_dmaengine_be_dma *dma_be;
++	struct snd_dmaengine_dai_dma_data *dma_data_be;
++	struct list_head *dmaengine_list;
++	enum dma_slave_buswidth buswidth;
++	int ret;
++	int bits_be;
++
++	dmaengine_list = is_playback ? &dma->dma_out_list : &dma->dma_in_list;
++	list_for_each_entry(dma_be, dmaengine_list, list) {
++		if (dma_be->phandle && dma_be->phandle->np == dai->dev->of_node) {
++			dev_dbg(dev, "found DMA data %s\n", dma_be->phandle->np->name);
++			break;
++		}
++	}
++	if (list_entry_is_head(dma_be, dmaengine_list, list)) {
++		dev_err(dev, "DMA data not found for BE %s\n", dai->name);
++		return -EINVAL;
++	}
++
++	dma_be_priv->phandle = dma_be->phandle;
++
++	dma_data_be = &dma_be->dma_data;
++	dma_be_priv->chan = dma_request_slave_channel(dev, dma_data_be->chan_name);
++	if (!dma_be_priv->chan) {
++		dev_err(dai->dev, "failed to request DMA channel %s for BE\n",
++			dma_data_be->chan_name);
++		ret = -EBUSY;
++		goto __cleanup_phandle;
++	}
++
++	bits_be = params_physical_width(&be->dpcm[!is_playback].hw_params);
++
++	if (bits_be < 8 || bits_be > 64) {
++		dev_err(dai->dev, "invalid physical width %d for BE %s\n", bits_be, dai->name);
++		ret = -EINVAL;
++		goto __cleanup_chan;
++	}
++	if (bits_be == 8)
++		buswidth = DMA_SLAVE_BUSWIDTH_1_BYTE;
++	else if (bits_be == 16)
++		buswidth = DMA_SLAVE_BUSWIDTH_2_BYTES;
++	else if (bits_be == 24)
++		buswidth = DMA_SLAVE_BUSWIDTH_3_BYTES;
++	else if (bits_be <= 32)
++		buswidth = DMA_SLAVE_BUSWIDTH_4_BYTES;
++	else
++		buswidth = DMA_SLAVE_BUSWIDTH_8_BYTES;
++
++	if (is_playback) {
++		config_be.direction = DMA_DEV_TO_MEM;
++		config_be.src_addr_width = buswidth;
++		config_be.src_maxburst = dma_data_be->maxburst;
++		config_be.src_addr = dma_data_be->addr;
++	} else {
++		config_be.direction = DMA_MEM_TO_DEV;
++		config_be.dst_addr_width = buswidth;
++		config_be.dst_maxburst = dma_data_be->maxburst;
++		config_be.dst_addr = dma_data_be->addr;
++	}
++	config_be.device_fc = false;
++
++	dev_dbg(dev,
++		"%s() AIF %s dir %s, src addr %pap, dst addr: %pap, src_addr_width %d, dst_addr_width %d, src maxburst %u, dst maxburst %u\n",
++		__func__, dai->name,
++		config_be.direction == DMA_MEM_TO_DEV ? "DMA_MEM_TO_DEV" :
++							"DMA_DEV_TO_MEM",
++		&config_be.src_addr, &config_be.dst_addr,
++		config_be.src_addr_width, config_be.dst_addr_width,
++		config_be.src_maxburst, config_be.dst_maxburst);
++
++	ret = dmaengine_slave_config(dma_be_priv->chan, &config_be);
++	if (ret) {
++		dev_err(dev, "failed to config DMA channel for BE %s: %d\n", dai->name, ret);
++		goto __cleanup_chan;
++	}
++
++	return 0;
++
++__cleanup_chan:
++	dma_release_channel(dma_be_priv->chan);
++__cleanup_phandle:
++	dma_be_priv->phandle = NULL;
++	return ret;
++}
++
++static int mchp_asrc_dma_hw_params(struct snd_soc_component *component,
++				   struct snd_pcm_substream *substream,
++				   struct snd_pcm_hw_params *params)
++{
++	struct dma_slave_config config_fe = {0};
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
++	struct mchp_asrc_dma_priv *priv = mchp_asrc_substream_to_prtd(substream);
++	struct snd_soc_dpcm *dpcm;
++	struct device *dev = component->dev;
++	struct mchp_asrc_dmaengine_dai_dma *dma;
++	struct snd_dmaengine_dai_dma_data *dma_data_fe = NULL;
++	struct snd_pcm_substream *substream_be;
++	struct mchp_asrc_dma_be_priv *dma_be_priv, *tmp, *dma_fe_priv;
++	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
++	struct mchp_asrc_dmaengine_be_dma *dma_be;
++	struct list_head *dma_be_list;
++	struct list_head *dma_be_head;
++	int ret;
++	bool is_playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++
++	/* save BEs for this substream */
++	for_each_dpcm_be(rtd, substream->stream, dpcm) {
++		struct snd_soc_pcm_runtime *be = dpcm->be;
++
++		if (dpcm->fe != rtd)
++			continue;
++
++		substream_be = snd_soc_dpcm_get_substream(be, substream->stream);
++		if (!substream_be)
++			continue;
++
++		dma_be_priv = kzalloc(sizeof(*dma_be_priv), GFP_KERNEL);
++		if (!dma_be_priv) {
++			ret = -ENOMEM;
++			goto __cleanup_dma_free;
++		}
++		dma_be_priv->dev = component->dev;
++		dma_be_priv->dpcm = dpcm;
++
++		if (is_playback)
++			list_add_tail(&dma_be_priv->list, &priv->dma_out_head);
++		else
++			list_add_tail(&dma_be_priv->list, &priv->dma_in_head);
++		dev_dbg(dev, "%s: add %s %s\n", __func__, is_playback ? "OUT" : "IN",
++			asoc_rtd_to_cpu(be, 0)->name);
++	}
++
++	dma = snd_soc_dai_get_dma_data(cpu_dai, substream);
++	if (!dma) {
++		if (params) {
++			dev_err(rtd->dev, "platform data not found for FE %s\n", cpu_dai->name);
++			ret = -EINVAL;
++			goto __cleanup_dma_free;
++		}
++		dev_dbg(rtd->dev, "platform data not set; probably half stream called: stream %s\n",
++			is_playback ? "playback" : "capture");
++		return 0;
++	}
++
++	/* start DMA config; start with current stream DMAs */
++	dma_be_head = is_playback ? &priv->dma_out_head : &priv->dma_in_head;
++	list_for_each_entry(dma_be_priv, dma_be_head, list) {
++		ret = mchp_asrc_be_dmaengine_slave_config(dma, dma_be_priv, is_playback);
++		if (ret < 0)
++			goto __cleanup_dma_be;
++	}
++
++	/* configure DMAs for the 'other' substream */
++	if (!params) {
++		dma_be_head = is_playback ? &priv->dma_in_head : &priv->dma_out_head;
++		list_for_each_entry(dma_be_priv, dma_be_head, list) {
++			ret = mchp_asrc_be_dmaengine_slave_config(dma, dma_be_priv, !is_playback);
++			if (ret < 0)
++				goto __cleanup_dma_rev;
++		}
++
++		return 0;
++	}
++
++	/* set FE */
++	dma_be_list = is_playback ? &dma->dma_in_list : &dma->dma_out_list;
++
++	list_for_each_entry(dma_be, dma_be_list, list) {
++		if (!dma_be->phandle) {
++			dma_data_fe = &dma_be->dma_data;
++			break;
++		}
++	}
++	if (!dma_data_fe) {
++		dev_err(dev, "FE DMA data not found\n");
++		ret = -EINVAL;
++		goto __cleanup_dma_rev;
++	}
++
++	dma_fe_priv = kzalloc(sizeof(*dma_fe_priv), GFP_KERNEL);
++	if (!dma_fe_priv) {
++		ret = -ENOMEM;
++		goto __cleanup_dma_rev;
++	}
++
++	dma_fe_priv->chan = dma_request_slave_channel(dev, dma_data_fe->chan_name);
++	if (!dma_fe_priv->chan) {
++		dev_err(dev, "failed to request DMA channel %s for FE %s\n",
++			dma_data_fe->chan_name, cpu_dai->name);
++		ret = -EINVAL;
++		goto __cleanup_free_fe;
++	}
++
++	ret = mchp_asrc_dmaengine_pcm_prepare_slave_config(dev, substream, params,
++							   dma_data_fe, &config_fe);
++	if (ret) {
++		dev_err(dev, "failed to prepare DMA config for FE %s\n", cpu_dai->name);
++		goto __cleanup_dma_fe;
++	}
++
++	dev_dbg(dev,
++		"%s() config %s: dir %s, src addr %pap, dst addr %pap, src_addr_width %d, dst_addr_width %d, src maxburst %u, dst maxburst %u\n",
++		__func__, cpu_dai->name,
++		config_fe.direction == DMA_MEM_TO_DEV ? "MEM_TO_DEV" :
++							"DEV_TO_MEM",
++		&config_fe.src_addr, &config_fe.dst_addr,
++		config_fe.src_addr_width, config_fe.dst_addr_width,
++		config_fe.src_maxburst, config_fe.dst_maxburst);
++
++	ret = dmaengine_slave_config(dma_fe_priv->chan, &config_fe);
++	if (ret) {
++		dev_err(dev, "failed to config DMA channel for FE %s\n", cpu_dai->name);
++		goto __cleanup_dma_fe;
++	}
++
++	/* on playback, FE is in AIF and on capture FE is out AIF */
++	if (is_playback)
++		list_add_tail(&dma_fe_priv->list, &priv->dma_in_head);
++	else
++		list_add_tail(&dma_fe_priv->list, &priv->dma_out_head);
++
++	dev_dbg(component->dev, "%s: added %s %s\n", __func__, is_playback ? "IN" : "OUT",
++		cpu_dai->name);
++	ret = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV_IRAM, dev, params_buffer_bytes(params),
++				  &substream->dma_buffer);
++	if (ret < 0)
++		goto __cleanup_dma_fe_list;
++
++	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
++
++	return 0;
++
++__cleanup_dma_fe_list:
++	list_del(&dma_fe_priv->list);
++__cleanup_dma_fe:
++	dma_release_channel(dma_fe_priv->chan);
++	dma_fe_priv->chan = NULL;
++__cleanup_free_fe:
++	kfree(dma_fe_priv);
++__cleanup_dma_rev:
++	if (!params) {
++		dma_be_head = is_playback ? &priv->dma_in_head : &priv->dma_out_head;
++		list_for_each_entry(dma_be_priv, dma_be_head, list) {
++			if (dma_be_priv->chan) {
++				dma_release_channel(dma_be_priv->chan);
++				dma_be_priv->chan = NULL;
++			}
++		}
++	}
++__cleanup_dma_be:
++	dma_be_head = is_playback ? &priv->dma_out_head : &priv->dma_in_head;
++	list_for_each_entry(dma_be_priv, dma_be_head, list) {
++		if (dma_be_priv->chan) {
++			dma_release_channel(dma_be_priv->chan);
++			dma_be_priv->chan = NULL;
++		}
++	}
++__cleanup_dma_free:
++	dma_be_head = is_playback ? &priv->dma_out_head : &priv->dma_in_head;
++	list_for_each_entry_safe(dma_be_priv, tmp, dma_be_head, list) {
++		list_del(&dma_be_priv->list);
++		kfree(dma_be_priv);
++	}
++
++	return ret;
++}
++
++static int mchp_asrc_dma_hw_free(struct snd_soc_component *component,
++				 struct snd_pcm_substream *substream)
++{
++	struct mchp_asrc_dma_priv *priv = mchp_asrc_substream_to_prtd(substream);
++	struct mchp_asrc_dma_be_priv *dma_be_priv, *tmp;
++
++	if (substream->dma_buffer.area) {
++		snd_dma_free_pages(&substream->dma_buffer);
++		substream->dma_buffer.area = NULL;
++		snd_pcm_set_runtime_buffer(substream, NULL);
++	}
++
++	list_for_each_entry(dma_be_priv, &priv->dma_in_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_synchronize(dma_be_priv->chan);
++	}
++
++	list_for_each_entry(dma_be_priv, &priv->dma_out_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_synchronize(dma_be_priv->chan);
++	}
++
++	list_for_each_entry_safe(dma_be_priv, tmp, &priv->dma_in_head, list) {
++		if (dma_be_priv->chan)
++			dma_release_channel(dma_be_priv->chan);
++		dma_be_priv->chan = NULL;
++		list_del(&dma_be_priv->list);
++		kfree(dma_be_priv);
++	}
++
++	list_for_each_entry_safe(dma_be_priv, tmp, &priv->dma_out_head, list) {
++		if (dma_be_priv->chan)
++			dma_release_channel(dma_be_priv->chan);
++		dma_be_priv->chan = NULL;
++		list_del(&dma_be_priv->list);
++		kfree(dma_be_priv);
++	}
++
++	return 0;
++}
++
++static void mchp_asrc_pcm_dma_complete(void *arg)
++{
++	struct snd_pcm_substream *substream = arg;
++	struct mchp_asrc_dma_priv *priv = mchp_asrc_substream_to_prtd(substream);
++
++	priv->pos += snd_pcm_lib_period_bytes(substream);
++	if (priv->pos >= snd_pcm_lib_buffer_bytes(substream))
++		priv->pos = 0;
++	snd_pcm_period_elapsed(substream);
++}
++
++static int mchp_asrc_dma_prepare(struct snd_soc_component *component,
++				 struct snd_pcm_substream *subs, struct mchp_asrc_dma_priv *priv)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(subs);
++	struct device *dev = component->dev;
++	unsigned long flags = DMA_CTRL_ACK;
++	enum dma_transfer_direction dir;
++	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
++	struct mchp_asrc_dmaengine_dai_dma *dma;
++	struct mchp_asrc_dma_be_priv *dma_fe_priv = NULL, *dma_be_priv;
++	struct dma_async_tx_descriptor *desc;
++	bool is_playback = subs->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	struct list_head *dma_be_head;
++	int stream;
++
++	dma = snd_soc_dai_get_dma_data(cpu_dai, subs);
++	if (!dma) {
++		dev_dbg(rtd->dev, "platform data not found for FE %s\n", cpu_dai->name);
++		return 0;
++	}
++
++	if (is_playback) {
++		dma_be_head = &priv->dma_out_head;
++		stream = SNDRV_PCM_STREAM_PLAYBACK;
++	} else {
++		dma_be_head = &priv->dma_in_head;
++		stream = SNDRV_PCM_STREAM_CAPTURE;
++	}
++	list_for_each_entry(dma_be_priv, dma_be_head, list) {
++		struct snd_soc_dpcm *dpcm;
++		struct snd_soc_pcm_runtime *be;
++		struct snd_soc_dai *dai;
++		struct snd_pcm_substream *subs_be;
++		struct snd_pcm_runtime *rtm_be;
++
++		if (!dma_be_priv->phandle) {
++			if (dma_fe_priv) {
++				dev_err(dev, "found multiple AIFs without DMA data\n");
++				return -EINVAL;
++			}
++			/* private DMA data for FE */
++			dma_fe_priv = dma_be_priv;
++			continue;
++		}
++
++		dpcm = dma_be_priv->dpcm;
++		be = dpcm->be;
++		dai = asoc_rtd_to_cpu(be, 0);
++
++		dev_dbg(dev, "%s() OUT BE DAI %s: rate=%u format=%#x width=%u channels=%u\n",
++			__func__, dai->name, params_rate(&be->dpcm[stream].hw_params),
++			params_format(&be->dpcm[stream].hw_params),
++			params_width(&be->dpcm[stream].hw_params),
++			params_channels(&be->dpcm[stream].hw_params));
++
++		if (!dma_be_priv->chan) {
++			dev_err(dev, "DMA channel not found for BE %s\n", dai->name);
++			return -EINVAL;
++		}
++
++		subs_be = snd_soc_dpcm_get_substream(be, stream);
++		rtm_be = subs_be->runtime;
++
++		dev_dbg(dev,
++			"%s() BE buffer_size(periods) %ld, buffer_size(bytes) %zu period_size(frames) %ld period_size(bytes) %zu\n",
++			__func__,
++			rtm_be->buffer_size, snd_pcm_lib_buffer_bytes(subs_be),
++			rtm_be->period_size, snd_pcm_lib_period_bytes(subs_be));
++
++		desc = dmaengine_prep_dma_cyclic(dma_be_priv->chan, rtm_be->dma_addr,
++						 snd_pcm_lib_buffer_bytes(subs_be),
++						 snd_pcm_lib_period_bytes(subs_be),
++						 is_playback ? DMA_DEV_TO_MEM :
++							       DMA_MEM_TO_DEV, DMA_CTRL_ACK);
++		if (!desc) {
++			dev_err(dev, "failed to prepare client DMA for BE %s\n", dai->name);
++			return -ENOMEM;
++		}
++		dma_be_priv->desc = desc;
++	}
++
++	if (is_playback) {
++		dma_be_head = &priv->dma_in_head;
++		stream = SNDRV_PCM_STREAM_CAPTURE;
++	} else {
++		dma_be_head = &priv->dma_out_head;
++		stream = SNDRV_PCM_STREAM_PLAYBACK;
++	}
++
++	/* get FE DMA data, if available */
++	list_for_each_entry(dma_be_priv, dma_be_head, list) {
++		struct snd_soc_dpcm *dpcm;
++		struct snd_soc_pcm_runtime *be;
++		struct snd_soc_dai *dai;
++		struct snd_pcm_substream *subs_be;
++		struct snd_pcm_runtime *rtm_be;
++
++		if (!dma_be_priv->phandle) {
++			if (dma_fe_priv) {
++				dev_err(dev, "found multiple AIFs without DMA data\n");
++				return -EINVAL;
++			}
++			/* private DMA data for FE */
++			dma_fe_priv = dma_be_priv;
++			continue;
++		}
++
++		dpcm = dma_be_priv->dpcm;
++		be = dpcm->be;
++		dai = asoc_rtd_to_cpu(be, 0);
++
++		dev_dbg(dev, "%s() IN BE DAI %s: rate=%u format=%#x width=%u channels=%u\n",
++			__func__, dai->name,
++			params_rate(&be->dpcm[stream].hw_params),
++			params_format(&be->dpcm[stream].hw_params),
++			params_width(&be->dpcm[stream].hw_params),
++			params_channels(&be->dpcm[stream].hw_params));
++
++		if (!dma_be_priv->chan) {
++			dev_err(dev, "DMA channel not found for BE %s\n", dai->name);
++			return -EINVAL;
++		}
++
++		subs_be = snd_soc_dpcm_get_substream(be, stream);
++		rtm_be = subs_be->runtime;
++
++		dev_dbg(dev,
++			"%s() BE buffer_size(periods) %ld, buffer_size(bytes) %zu period_size(frames) %ld period_size(bytes) %zu\n",
++			__func__,
++			rtm_be->buffer_size, snd_pcm_lib_buffer_bytes(subs_be),
++			rtm_be->period_size, snd_pcm_lib_period_bytes(subs_be));
++
++		desc = dmaengine_prep_dma_cyclic(dma_be_priv->chan, rtm_be->dma_addr,
++						 snd_pcm_lib_buffer_bytes(subs_be),
++						 snd_pcm_lib_period_bytes(subs_be),
++						 !is_playback ? DMA_DEV_TO_MEM :
++							       DMA_MEM_TO_DEV, DMA_CTRL_ACK);
++		if (!desc) {
++			dev_err(dev, "failed to prepare client DMA for BE %s\n", dai->name);
++			return -ENOMEM;
++		}
++		dma_be_priv->desc = desc;
++	}
++
++	/* FE present, initialize the DMA transfer to user space */
++	if (dma_fe_priv) {
++		if (!subs->runtime->no_period_wakeup)
++			flags |= DMA_PREP_INTERRUPT;
++
++		priv->pos = 0;
++		dir = snd_pcm_substream_to_dma_direction(subs);
++		desc = dmaengine_prep_dma_cyclic(dma_fe_priv->chan, subs->runtime->dma_addr,
++						 snd_pcm_lib_buffer_bytes(subs),
++						 snd_pcm_lib_period_bytes(subs), dir, flags);
++		if (!desc) {
++			dev_err(dev, "failed to prepare client DMA for FE %s\n", cpu_dai->name);
++			return -ENOMEM;
++		}
++
++		dma_fe_priv->desc = desc;
++		dma_fe_priv->desc->callback = mchp_asrc_pcm_dma_complete;
++		dma_fe_priv->desc->callback_param = subs;
++
++		dev_dbg(dev,
++			"%s() FE buffer_size(periods) %ld, buffer_size(bytes) %zu period_size(frames) %ld period_size(bytes) %zu\n",
++			__func__,
++			subs->runtime->buffer_size, snd_pcm_lib_buffer_bytes(subs),
++			subs->runtime->period_size, snd_pcm_lib_period_bytes(subs));
++	} else {
++		dev_dbg(dev, "%s() FE DMA not found\n", __func__);
++	}
++
++	dev_dbg(dev, "%s: initializing start_handle tasklet\n", __func__);
++	tasklet_init(&dma->start_handle, &mchp_asrc_start_handle, (unsigned long)priv);
++
++	return 0;
++}
++
++static void mchp_asrc_dmaengine_resume(struct mchp_asrc_dma_priv *priv)
++{
++	struct mchp_asrc_dma_be_priv *dma_be_priv;
++
++	list_for_each_entry(dma_be_priv, &priv->dma_in_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_resume(dma_be_priv->chan);
++	}
++	list_for_each_entry(dma_be_priv, &priv->dma_out_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_resume(dma_be_priv->chan);
++	}
++}
++
++static void mchp_asrc_dmaengine_pause(struct mchp_asrc_dma_priv *priv)
++{
++	struct mchp_asrc_dma_be_priv *dma_be_priv;
++
++	list_for_each_entry(dma_be_priv, &priv->dma_in_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_pause(dma_be_priv->chan);
++	}
++	list_for_each_entry(dma_be_priv, &priv->dma_out_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_pause(dma_be_priv->chan);
++	}
++}
++
++static void mchp_asrc_dmaengine_term(struct mchp_asrc_dma_priv *priv)
++{
++	struct mchp_asrc_dma_be_priv *dma_be_priv;
++
++	list_for_each_entry(dma_be_priv, &priv->dma_in_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_terminate_async(dma_be_priv->chan);
++		else
++			dev_dbg(priv->dev, "no DMA channel in IN queue\n");
++	}
++	list_for_each_entry(dma_be_priv, &priv->dma_out_head, list) {
++		if (dma_be_priv->chan)
++			dmaengine_terminate_async(dma_be_priv->chan);
++		else
++			dev_dbg(priv->dev, "no DMA channel in OUT queue\n");
++	}
++}
++
++static int mchp_asrc_dma_trigger(struct snd_soc_component *component,
++				 struct snd_pcm_substream *substream, int cmd)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct mchp_asrc_dma_priv *priv = mchp_asrc_substream_to_prtd(substream);
++	int ret;
++
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++		ret = mchp_asrc_dma_prepare(component, substream, priv);
++		if (ret)
++			return ret;
++		break;
++	case SNDRV_PCM_TRIGGER_RESUME:
++		fallthrough;
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		mchp_asrc_dmaengine_resume(priv);
++		break;
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++		if (runtime->info & SNDRV_PCM_INFO_PAUSE)
++			mchp_asrc_dmaengine_pause(priv);
++		else
++			mchp_asrc_dmaengine_term(priv);
++		break;
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		mchp_asrc_dmaengine_pause(priv);
++		break;
++	case SNDRV_PCM_TRIGGER_STOP:
++		mchp_asrc_dmaengine_term(priv);
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static snd_pcm_uframes_t
++mchp_asrc_dma_pcm_pointer(struct snd_soc_component *component, struct snd_pcm_substream *substream)
++{
++	struct snd_pcm_runtime *runtime = substream->runtime;
++	struct mchp_asrc_dma_priv *priv = mchp_asrc_substream_to_prtd(substream);
++	struct mchp_asrc_dma_be_priv *dma_fe_priv;
++	struct dma_tx_state state;
++	enum dma_status status;
++	unsigned int buf_size;
++	unsigned int pos = 0;
++	bool is_playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	struct list_head *dma_fe_head = is_playback ? &priv->dma_in_head : &priv->dma_out_head;
++
++	priv = mchp_asrc_substream_to_prtd(substream);
++	if (priv->no_residue)
++		return bytes_to_frames(runtime, priv->pos);
++
++	list_for_each_entry(dma_fe_priv, dma_fe_head, list) {
++		if (!dma_fe_priv->phandle)
++			break;
++	}
++	if (list_entry_is_head(dma_fe_priv, dma_fe_head, list)) {
++		dev_err(priv->dev, "FE DMA phandle not found\n");
++		return 0;
++	}
++	status = dmaengine_tx_status(dma_fe_priv->chan, priv->cookie, &state);
++	if (status == DMA_IN_PROGRESS || status == DMA_PAUSED) {
++		buf_size = snd_pcm_lib_buffer_bytes(substream);
++		if (state.residue > 0 && state.residue <= buf_size)
++			pos = buf_size - state.residue;
++
++		runtime->delay = bytes_to_frames(runtime, state.in_flight_bytes);
++	}
++
++	return bytes_to_frames(substream->runtime, pos);
++}
++
++static int mchp_asrc_dma_pcm_new(struct snd_soc_component *component,
++				 struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_pcm_substream *substream;
++	struct snd_pcm *pcm = rtd->pcm;
++	int i;
++
++	for (i = SNDRV_PCM_STREAM_PLAYBACK; i <= SNDRV_PCM_STREAM_LAST; i++) {
++		substream = pcm->streams[i].substream;
++		if (!substream)
++			continue;
++
++		substream->dma_buffer.bytes = 0;
++		substream->dma_buffer.area = NULL;
++		substream->dma_buffer.addr = 0;
++		substream->dma_buffer.private_data = NULL;
++	}
++
++	return 0;
++}
++
++static void mchp_asrc_dma_pcm_free(struct snd_soc_component *component,
++				   struct snd_pcm *pcm)
++{
++	struct snd_pcm_substream *substream;
++	int i;
++
++	for (i = SNDRV_PCM_STREAM_PLAYBACK; i <= SNDRV_PCM_STREAM_LAST; i++) {
++		substream = pcm->streams[i].substream;
++		if (!substream)
++			continue;
++
++		substream->dma_buffer.area = NULL;
++		substream->dma_buffer.addr = 0;
++	}
++}
++
++const struct snd_soc_component_driver mchp_asrc_platform = {
++	.name		= MCHP_ASRC_DMAENGINE_PCM_DRV_NAME,
++	.pcm_construct	= mchp_asrc_dma_pcm_new,
++	.pcm_destruct	= mchp_asrc_dma_pcm_free,
++	.hw_params	= mchp_asrc_dma_hw_params,
++	.hw_free	= mchp_asrc_dma_hw_free,
++	.trigger	= mchp_asrc_dma_trigger,
++	.open		= mchp_asrc_dma_open,
++	.close		= mchp_asrc_dma_close,
++	.pointer	= mchp_asrc_dma_pcm_pointer,
++};
++EXPORT_SYMBOL_GPL(mchp_asrc_platform);
++
++int mchp_asrc_pcm_register(struct device *dev)
++{
++	int err;
++
++	err = devm_snd_soc_register_component(dev, &mchp_asrc_platform, NULL, 0);
++	if (err) {
++		dev_err(dev, "failed to register ASoC platform for ASRC\n");
++		return err;
++	}
++
++	return 0;
++}
+--- /dev/null
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-asrc.c	2024-12-04 16:41:41.478993400 +0900
+@@ -0,0 +1,2130 @@
++// SPDX-License-Identifier: GPL-2.0
++// ASoC driver for Microchip ASRC
++//
++// Copyright (C) 2018-2022 Microchip Technology Inc. and its subsidiaries
++//
++// Author: Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/lcm.h>
++#include <linux/list.h>
++#include <linux/minmax.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++
++#include <sound/core.h>
++#include <sound/pcm.h>
++#include <sound/pcm_params.h>
++#include <sound/initval.h>
++#include <sound/soc.h>
++#include <sound/dmaengine_pcm.h>
++
++#include "mchp-asrc.h"
++
++/*
++ * ---- ASRC Controller Register map ----
++ */
++#define MCHP_ASRC_CR			0x0000	/* Control Register */
++#define MCHP_ASRC_MR			0x0004	/* Mode Register */
++#define MCHP_ASRC_RATIO(block)		(0x0008 + (block) * 4)	/* Ratio Register x */
++#define MCHP_ASRC_VBPS_IN		0x0018	/* Valid Bit Per Sample In Register */
++#define MCHP_ASRC_VBPS_OUT		0x001C	/* Valid Bit Per Sample Out Register */
++#define MCHP_ASRC_CH_CONF		0x0020	/* Channel Configuration Register */
++#define MCHP_ASRC_TRIG			0x0024	/* Trigger Selection Register */
++
++#define MCHP_ASRC_RHR(block)		(0x0028 + 4 * (block))	/* Receive Holding Registers */
++#define MCHP_ASRC_THR(block)		(0x0048 + 4 * (block))	/* Transmit Holding Registers */
++
++#define MCHP_ASRC_IER(block)		(0x0068 + 4 * (block))
++#define MCHP_ASRC_IDR(block)		(0x0078 + 4 * (block))
++#define MCHP_ASRC_IMR(block)		(0x0088 + 4 * (block))
++#define MCHP_ASRC_ISR(block)		(0x0098 + 4 * (block))
++
++#define MCHP_ASRC_ESR			0x00A8	/* Error Status Register */
++
++#define MCHP_ASRC_WPMR			0x00E4	/* Write Protection Mode Register */
++#define MCHP_ASRC_WPSR			0x00E8	/* Write Protection Status Register */
++
++#define MCHP_ASRC_VERSION		0x00FC	/* Version Register */
++
++/*
++ * ---- Control Register (Write-only) ----
++ */
++#define MCHP_ASRC_CR_SWRST		BIT(0)
++
++/*
++ * ---- Mode Register (Read/Write) ----
++ */
++/* ASRC Stereo Channel x Enable */
++#define MCHP_ASRC_MR_ASRCEN_MASK	GENMASK(3, 0)
++#define MCHP_ASRC_MR_ASRCEN(block)	BIT(block)
++
++/* Sampling frequency greater than 96 KHz  */
++#define MCHP_ASRC_MR_GT96K		BIT(12)
++
++/*
++ * ---- Ratio Register of Stereo Channel x (Read/Write) ----
++ */
++/* Input Internal Sampling Rate Ratio */
++#define MCHP_ASRC_RATIO_INRATIO_MASK	GENMASK(15, 0)
++#define MCHP_ASRC_RATIO_INRATIO(ratio)	((ratio) & MCHP_ASRC_RATIO_INRATIO_MASK)
++
++/* Output Internal Sampling Rate Ratio */
++#define MCHP_ASRC_RATIO_OUTRATIO_MASK	GENMASK(31, 16)
++#define MCHP_ASRC_RATIO_OUTRATIO(ratio) \
++	(((ratio) << 16) & MCHP_ASRC_RATIO_OUTRATIO_MASK)
++
++/*
++ * ---- Valid bit Per Sample In/Out (Read/Write) ----
++ */
++#define MCHP_ASRC_VBPS_MASK(block) \
++	(GENMASK(3, 0) << ((block) * 8))
++#define MCHP_ASRC_VBPS(block, val) \
++	(((val) & GENMASK(3, 0)) << ((block) * 8))
++
++#define MCHP_ASRC_VBPS_8_BIT(block)	MCHP_ASRC_VBPS(block, 0)
++#define MCHP_ASRC_VBPS_16_BIT(block)	MCHP_ASRC_VBPS(block, 1)
++#define MCHP_ASRC_VBPS_20_BIT(block)	MCHP_ASRC_VBPS(block, 2)
++#define MCHP_ASRC_VBPS_24_BIT(block)	MCHP_ASRC_VBPS(block, 3)
++#define MCHP_ASRC_VBPS_32_BIT(block)	MCHP_ASRC_VBPS(block, 4)
++#define MCHP_ASRC_VBPS_10_BIT(block)	MCHP_ASRC_VBPS(block, 5)
++#define MCHP_ASRC_VBPS_12_BIT(block)	MCHP_ASRC_VBPS(block, 6)
++#define MCHP_ASRC_VBPS_14_BIT(block)	MCHP_ASRC_VBPS(block, 7)
++#define MCHP_ASRC_VBPS_18_BIT(block)	MCHP_ASRC_VBPS(block, 8)
++
++/*
++ * ---- Channel configuration Registers (Read/Write) ----
++ */
++/* Operating Mode for Transmit Holding Registers */
++#define MCHP_ASRC_CH_CONF_THROPMODE_MASK	GENMASK(2, 0)
++#define MCHP_ASRC_CH_CONF_THROPMODE(val) \
++	((val) & MCHP_ASRC_CH_CONF_THROPMODE_MASK)
++
++/* Operating Mode for Receive Holding Registers */
++#define MCHP_ASRC_CH_CONF_RHROPMODE_MASK	GENMASK(6, 4)
++#define MCHP_ASRC_CH_CONF_RHROPMODE(val) \
++	(((val) << 4) & MCHP_ASRC_CH_CONF_RHROPMODE_MASK)
++
++/* Audio Block Operating Mode; Mono or Stereo */
++#define MCHP_ASRC_CH_CONF_MONO_MASK		GENMASK(11, 8)
++#define MCHP_ASRC_CH_CONF_MONO(ch)		BIT((ch) + 8)
++
++/* DMA Audio Block x CHUNK Size */
++#define MCHP_ASRC_CH_CONF_CHUNK_MASK(block) \
++	(GENMASK(2, 0) << ((block) * 4 + 16))
++#define MCHP_ASRC_CH_CONF_CHUNK(block, val) \
++	(((val) & GENMASK(2, 0)) << ((block) * 4 + 16))
++#define MCHP_ASRC_CH_CONF_CHUNK_1_DATA(block)	MCHP_ASRC_CH_CONF_CHUNK(block, 0)
++#define MCHP_ASRC_CH_CONF_CHUNK_2_DATA(block)	MCHP_ASRC_CH_CONF_CHUNK(block, 1)
++#define MCHP_ASRC_CH_CONF_CHUNK_4_DATA(block)	MCHP_ASRC_CH_CONF_CHUNK(block, 2)
++#define MCHP_ASRC_CH_CONF_CHUNK_8_DATA(block)	MCHP_ASRC_CH_CONF_CHUNK(block, 3)
++#define MCHP_ASRC_CH_CONF_CHUNK_16_DATA(block)	MCHP_ASRC_CH_CONF_CHUNK(block, 4)
++
++/*
++ * ---- Trigger Selection Registers (Read/Write) ----
++ */
++#define MCHP_ASRC_TRIG_TRIGSELIN_MASK(ch) \
++	(GENMASK(3, 0) << ((ch) * 4))
++#define MCHP_ASRC_TRIG_TRIGSELIN(src, ch) \
++	(((src) & GENMASK(3, 0)) << ((ch) * 4))
++
++#define MCHP_ASRC_TRIG_TRIGSELOUT_MASK(ch) \
++	(GENMASK(3, 0) << ((ch) * 4 + 16))
++#define MCHP_ASRC_TRIG_TRIGSELOUT(src, ch) \
++	(((src) & GENMASK(3, 0)) << ((ch) * 4 + 16))
++
++/*
++ * ---- Interrupt Enable/Disable/Mask/Status Registers ----
++ */
++#define MCHP_ASRC_IR_RXRDY		BIT(0)
++#define MCHP_ASRC_IR_RXEMPTY		BIT(1)
++#define MCHP_ASRC_IR_RXFULL		BIT(2)
++#define MCHP_ASRC_IR_RXCHUNK		BIT(3)
++#define MCHP_ASRC_IR_RXUDR		BIT(4)
++#define MCHP_ASRC_IR_RXOVR		BIT(5)
++
++#define MCHP_ASRC_IR_TXRDY		BIT(8)
++#define MCHP_ASRC_IR_TXEMPTY		BIT(9)
++#define MCHP_ASRC_IR_TXFULL		BIT(10)
++#define MCHP_ASRC_IR_TXCHUNK		BIT(11)
++#define MCHP_ASRC_IR_TXUDR		BIT(12)
++#define MCHP_ASRC_IR_TXOVR		BIT(13)
++
++#define MCHP_ASRC_IR_SECE		BIT(16)
++
++#define MCHP_ASRC_IR_LOCK		BIT(30)
++
++/*
++ * ---- Error Status Register (Read-only) ----
++ */
++#define MCHP_ASRC_ESR_INCFGERR_MASK	GENMASK(4, 0)
++#define MCHP_ASRC_ESR_OUTCFGERR_MASK	GENMASK(12, 8)
++
++/*
++ * ---- Version Register (Read-only) ----
++ */
++#define MCHP_ASRC_VERSION_MASK		GENMASK(11, 0)
++
++#define MCHP_ASRC_LT96K_RATIO_MIN		2048
++#define MCHP_ASRC_GT96K_RATIO_MIN		1024
++#define MCHP_ASRC_TRIG_IDX_MAX_VAL		16
++#define MCHP_ASRC_RATIO_MAX			MCHP_ASRC_RATIO_INRATIO_MASK
++#define MCHP_ASRC_OPMODE_MAX			5
++
++static const struct regmap_config mchp_asrc_regmap_config = {
++	.reg_bits = 32,
++	.reg_stride = 4,
++	.val_bits = 32,
++	.max_register = MCHP_ASRC_VERSION,
++};
++
++static const struct snd_soc_dapm_route mchp_asrc_route[] = {
++	{"ASRC-Playback 1", NULL, "ASRC-Capture 1"},
++	{"ASRC-Playback 2", NULL, "ASRC-Capture 2"},
++	{"ASRC-Playback 3", NULL, "ASRC-Capture 3"},
++	{"ASRC-Playback 4", NULL, "ASRC-Capture 4"},
++};
++
++static const struct snd_soc_component_driver mchp_asrc_component = {
++	.name			= "mchp-asrc-dai",
++	.dapm_routes		= mchp_asrc_route,
++	.num_dapm_routes	= ARRAY_SIZE(mchp_asrc_route),
++};
++
++/* one slot in the ASRC, representing one or more DSPs reserverd for PCM */
++struct mchp_asrc_slot {
++	int first_dsp;
++	int dsp_count;
++	int slot_id;
++};
++
++struct opmode_to_slot {
++	struct mchp_asrc_slot slot[MCHP_ASRC_NB_STEREO_CH];
++};
++
++/* represents the slots with the used DSPs for each opmode */
++static const struct opmode_to_slot asrc_map[] = {
++	{{{0, 1, 0},		{1, 1, 1},	{2, 1, 2},	{3, 1, 3}}},
++	{{{0, 2, 0},		{2, 1, 1},	{3, 1, 2}}},
++	{{{0, 2, 0},		{2, 2, 1}}},
++	{{{0, 3, 0},		{3, 1, 1}}},
++	{{{0, 4, 0}}},
++};
++
++struct xmit_ch {
++	int thr_ch[MCHP_ASRC_NB_STEREO_CH];
++	int rhr_ch[MCHP_ASRC_NB_STEREO_CH];
++	int thr_ch_count;
++	int rhr_ch_count;
++	int dsps_used;
++	bool in_use;
++};
++
++struct opmode {
++	struct xmit_ch tc[MCHP_ASRC_NB_STEREO_CH];
++	int tc_count;
++};
++
++/* represents the transmit and receive channels for all opmode combinations */
++static struct opmode ch_conf[MCHP_ASRC_OPMODE_MAX][MCHP_ASRC_OPMODE_MAX] = {
++	[0][0] = {{
++		{{0}, {0}, 1, 1, 1},
++		{{1}, {1}, 1, 1, 1},
++		{{2}, {2}, 1, 1, 1},
++		{{3}, {3}, 1, 1, 1},
++	}, 4,					/* THOPMODE 0, RHOPMODE 0 */
++	},
++	[0][1] = {{
++		{{0, 1}, {0}, 2, 1, 2},
++		{{2}, {1}, 1, 1, 1},
++		{{3}, {2}, 1, 1, 1},
++	}, 3,					/* THOPMODE 0, RHOPMODE 1 */
++	},
++	[0][2] = {{
++		{{0, 1}, {0}, 2, 1, 2},
++		{{2, 3}, {1}, 2, 1, 2},
++	}, 2,					/* THOPMODE 0, RHOPMODE 2 */
++	},
++	[0][3] = {{
++		{{0, 1, 2}, {0}, 3, 1, 3},
++		{{3}, {1}, 1, 1, 1},
++	}, 2,					/* THOPMODE 0, RHOPMODE 3 */
++	},
++	[0][4] = {{
++		{{0, 1, 2, 3}, {0}, 4, 1, 4},
++	}, 1,					/* THOPMODE 0, RHOPMODE 4 */
++	},
++	[1][0] = {{
++		{{0}, {0, 1}, 1, 2, 2},
++		{{1}, {2}, 1, 1, 1},
++		{{2}, {3}, 1, 1, 1},
++	}, 3,					/* THOPMODE 1, RHOPMODE 0 */
++	},
++	[1][1] = {{
++		{{0}, {0}, 1, 1, 2},
++		{{1}, {1}, 1, 1, 1},
++		{{2}, {2}, 1, 1, 1},
++	}, 3,					/* THOPMODE 1, RHOPMODE 1 */
++	},
++	[1][2] = {{
++		{{0}, {0}, 1, 1, 2},
++		{{1, 2}, {1}, 2, 1, 2},
++	}, 2,					/* THOPMODE 1, RHOPMODE 2 */
++	},
++	[1][3] = {{
++		{{0, 1}, {0}, 2, 1, 3},
++		{{2}, {1}, 1, 1, 1},
++	}, 2,					/* THOPMODE 1, RHOPMODE 3 */
++	},
++	[1][4] = {{
++		{{0, 1, 2}, {0}, 3, 1, 4},
++	}, 1,					/* THOPMODE 1, RHOPMODE 4 */
++	},
++	[2][0] = {{
++		{{0}, {0, 1}, 1, 2, 2},
++		{{1}, {2, 3}, 1, 2, 2},
++	}, 2,					/* THOPMODE 2, RHOPMODE 0 */
++	},
++	[2][1] = {{
++		{{0}, {0}, 1, 1, 2},
++		{{1}, {1, 2}, 1, 2, 2},
++	}, 2,					/* THOPMODE 2, RHOPMODE 1 */
++	},
++	[2][2] = {{
++		{{0}, {0}, 1, 1, 2},
++		{{1}, {1}, 1, 1, 2},
++	}, 2,					/* THOPMODE 2, RHOPMODE 2 */
++	},
++	[2][3] = {{
++		/* not implemented for now */
++		{{0}, {0}, 1, 1, 2},
++		{{1}, {0}, 1, 1, 1},
++		{{1}, {1}, 1, 1, 1},
++	}, 3,					/* THOPMODE 2, RHOPMODE 3 */
++	},
++	[2][4] = {{
++		{{0, 1}, {0}, 2, 1, 4},
++	}, 1,					/* THOPMODE 2, RHOPMODE 4 */
++	},
++	[3][0] = {{
++		{{0}, {0, 1, 2}, 1, 3, 3},
++		{{1}, {3}, 1, 1, 1},
++	}, 2,					/* THOPMODE 3, RHOPMODE 0 */
++	},
++	[3][1] = {{
++		{{0}, {0, 1}, 1, 2, 3},
++		{{1}, {2}, 1, 1, 1},
++	}, 2,					/* THOPMODE 3, RHOPMODE 1 */
++	},
++	[3][2] = {{
++		/* not implemented for now */
++		{{0}, {0}, 1, 1, 2},
++		{{0}, {1}, 1, 1, 1},
++		{{1}, {1}, 1, 1, 1},
++	}, 3,					/* THOPMODE 3, RHOPMODE 2 */
++	},
++	[3][3] = {{
++		{{0}, {0}, 1, 1, 3},
++		{{1}, {1}, 1, 1, 1},
++	}, 2,					/* THOPMODE 3, RHOPMODE 3 */
++	},
++	[3][4] = {{
++		{{0, 1}, {0}, 2, 1, 4},
++	}, 1,					/* THOPMODE 3, RHOPMODE 4 */
++	},
++	[4][0] = {{
++		{{0}, {0, 1, 2, 3}, 1, 4, 4},
++	}, 1,					/* THOPMODE 4, RHOPMODE 0 */
++	},
++	[4][1] = {{
++		{{0}, {0, 1, 2}, 1, 3, 4},
++	}, 1,					/* THOPMODE 4, RHOPMODE 1 */
++	},
++	[4][2] = {{
++		{{0}, {0, 1}, 1, 2, 4},
++	}, 1,					/* THOPMODE 4, RHOPMODE 2 */
++	},
++	[4][3] = {{
++		{{0}, {0, 1}, 1, 2, 4},
++	}, 1,					/* THOPMODE 4, RHOPMODE 3 */
++	},
++	[4][4] = {{
++		{{0}, {0}, 1, 1, 4},
++	}, 1,					/* THOPMODE 4, RHOPMODE 4 */
++	},
++};
++
++struct mchp_asrc_be_trigger;
++
++/* runtime structure to dynamically associate a trigger wth a BE DAI */
++struct mchp_asrc_be_rtm {
++	struct mchp_asrc_be_trigger	*trig;	/* backpointer */
++	struct snd_pcm_hw_params	*hw_params;	// used by the links that are not BE
++	struct mchp_asrc_slot const	*slot;
++	struct list_head		list;
++};
++
++/* associated with one HW BE audio IP */
++struct mchp_asrc_be_trigger {
++	struct mchp_asrc_be_rtm		*rtm[SNDRV_PCM_STREAM_LAST + 1];
++	struct mchp_asrc_dev		*priv;				/* backpointer */
++	struct of_phandle_args		*phandle;
++	u32				idx;
++};
++
++struct mchp_asrc_dsp_priv {
++	struct mchp_asrc_dmaengine_dai_dma	*dma;
++};
++
++struct mchp_asrc_pcm_priv {
++	struct mchp_asrc_dmaengine_dai_dma	dma;
++	struct list_head			list_head_in;
++	struct list_head			list_head_out;
++	struct xmit_ch				*tc;
++	struct mchp_asrc_be_rtm			rtm_fe;		/* used for FE --- BEs links */
++	int					refcount;
++	int					maxburst;
++	bool					is_hostless;
++};
++
++struct mchp_asrc_dev {
++	struct mchp_asrc_dsp_priv		dsp[MCHP_ASRC_NB_STEREO_CH];
++	struct mchp_asrc_pcm_priv		*pcm[MCHP_ASRC_NB_STEREO_CH];
++	struct device				*dev;
++	struct regmap				*regmap;
++	struct clk				*pclk;
++	struct clk				*gclk;
++	struct resource				*mem;
++	struct mchp_asrc_be_trigger		*trig;
++	int					trig_count;
++	int					thr_opmode;
++	int					rhr_opmode;
++};
++
++static inline int mchp_asrc_period_to_burst(int period_size, int sample_size)
++{
++	if (!(period_size % (sample_size * 16)))
++		return 16;
++
++	if (!(period_size % (sample_size * 8)))
++		return 8;
++
++	if (!(period_size % (sample_size * 4)))
++		return 4;
++
++	if (!(period_size % (sample_size * 2)))
++		return 2;
++
++	return 1;
++}
++
++static inline int mchp_asrc_burst_to_chunk(int dsp, int burst)
++{
++	switch (burst) {
++	case 16:
++		return MCHP_ASRC_CH_CONF_CHUNK_16_DATA(dsp);
++	case 8:
++		return MCHP_ASRC_CH_CONF_CHUNK_8_DATA(dsp);
++	case 4:
++		return MCHP_ASRC_CH_CONF_CHUNK_4_DATA(dsp);
++	case 2:
++		return MCHP_ASRC_CH_CONF_CHUNK_2_DATA(dsp);
++	default:
++		return MCHP_ASRC_CH_CONF_CHUNK_1_DATA(dsp);
++	}
++}
++
++/* rule to limit the number of channels based on available DSPs and available BEs */
++static int mchp_asrc_ch_rule(struct snd_pcm_hw_params *params, struct snd_pcm_hw_rule *rule)
++{
++	struct mchp_asrc_dev *priv = rule->private;
++	struct snd_interval t;
++	int dsps_running;
++	int max_dsps_avail;
++	u32 mr;
++
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &mr);
++	dsps_running = hweight32(mr & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	/* there are no limitatins if there are no running DSPs */
++	if (!dsps_running)
++		return 0;
++
++	/* with sr over 96000, only 2 DSPs can be used */
++	if (mr & MCHP_ASRC_MR_GT96K)
++		max_dsps_avail = 2;
++	else
++		max_dsps_avail = MCHP_ASRC_NB_STEREO_CH;
++
++	if (max_dsps_avail <= dsps_running)
++		return -EBUSY;
++
++	snd_interval_any(&t);
++	t.max = (max_dsps_avail - dsps_running) * 2;
++
++	return snd_interval_refine(hw_param_interval(params, rule->var), &t);
++}
++
++/* rule to never have a sampling rate greater than 96kHz if more than 2 DSPs are used */
++static int mchp_asrc_ch_rate_rule(struct snd_pcm_hw_params *params, struct snd_pcm_hw_rule *rule)
++{
++	struct snd_interval t;
++	struct mchp_asrc_dev *priv = rule->private;
++	unsigned int gclk_max_rate;
++	unsigned int fs = params_rate(params);
++	int dsps_running;
++	int dsps_req = (params_channels(params) + 1) / 2;
++	int gt96k;
++	u32 mr;
++
++	snd_interval_any(&t);
++
++	/* GCLK can't be 4 times higher than PCLK */
++	gclk_max_rate = clk_get_rate(priv->pclk) * 4 - 1;
++
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &mr);
++	dsps_running = hweight32(mr & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	if (!dsps_running) {
++		if (fs > 96000)
++			t.max = gclk_max_rate / MCHP_ASRC_GT96K_RATIO_MIN;
++		else
++			t.max = min(gclk_max_rate / MCHP_ASRC_LT96K_RATIO_MIN, 96000U);
++		return snd_interval_refine(hw_param_interval(params, rule->var), &t);
++	}
++
++	/* some DSPs are running so GT96K can't be changed */
++	gt96k = !!(mr & MCHP_ASRC_MR_GT96K);
++	if (dsps_running + dsps_req <= 2) {
++		if (gt96k)
++			t.max = gclk_max_rate / MCHP_ASRC_GT96K_RATIO_MIN;
++		else
++			t.max = min(gclk_max_rate / MCHP_ASRC_LT96K_RATIO_MIN, 96000U);
++		return snd_interval_refine(hw_param_interval(params, rule->var), &t);
++	}
++
++	/* if GT96K bit is set, only 2 DSPs can run */
++	if (dsps_running + dsps_req > 2 && gt96k)
++		return -EBUSY;
++
++	t.max = min(gclk_max_rate / MCHP_ASRC_LT96K_RATIO_MIN, 96000U);
++	return snd_interval_refine(hw_param_interval(params, rule->var), &t);
++}
++
++static int mchp_asrc_startup(struct snd_pcm_substream *substream,
++			     struct snd_soc_dai *dai)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	struct mchp_asrc_dev *priv = snd_soc_dai_get_drvdata(dai);
++	struct snd_soc_dpcm *dpcm;
++	int dsps_running;
++	int ret;
++	u32 mr;
++	int i;
++
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &mr);
++	dsps_running = hweight32(mr & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	/*
++	 * if there are already 2 DSPs running at a sampling rate higher than
++	 * 96kHz, we can not use the rest of the DSPs
++	 */
++	if (dsps_running >= 2 && (mr & MCHP_ASRC_MR_GT96K))
++		return -EBUSY;
++
++	ret = snd_pcm_hw_rule_add(substream->runtime, 0, SNDRV_PCM_HW_PARAM_CHANNELS,
++				  mchp_asrc_ch_rule, priv, SNDRV_PCM_HW_PARAM_CHANNELS, -1);
++	if (ret < 0) {
++		dev_err(rtd->dev, "failed to add rule for no of channels: %d", ret);
++		return ret;
++	}
++
++	ret = snd_pcm_hw_rule_add(substream->runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
++				  mchp_asrc_ch_rate_rule, priv, SNDRV_PCM_HW_PARAM_CHANNELS,
++				  SNDRV_PCM_HW_PARAM_RATE, -1);
++	if (ret < 0) {
++		dev_err(rtd->dev, "failed to add rule for sampling rate: %d", ret);
++		return ret;
++	}
++
++	for_each_dpcm_be(rtd, substream->stream, dpcm) {
++		struct snd_soc_pcm_runtime *be = dpcm->be;
++		struct snd_soc_dai *dai_be = asoc_rtd_to_cpu(be, 0);
++		struct snd_pcm_substream *substream_be;
++
++		if (dpcm->fe != rtd)
++			continue;
++
++		substream_be = snd_soc_dpcm_get_substream(be, substream->stream);
++		if (!substream_be)
++			continue;
++
++		dev_dbg(rtd->dev, "%s() Found BE DAI %s\n", __func__, dai_be->name);
++
++		for (i = 0; i < priv->trig_count; i++) {
++			struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++			struct mchp_asrc_be_rtm *rtm_be;
++
++			if (!trig_be->phandle || trig_be->phandle->np != dai_be->dev->of_node)
++				continue;
++
++			dev_dbg(priv->dev, "BE %s found in triger list with id %d\n",
++				dai_be->name, trig_be->idx);
++
++			if (trig_be->rtm[substream->stream]) {
++				dev_err(priv->dev, "interface %s already running\n",
++					trig_be->phandle->np->full_name);
++				ret = -EBUSY;
++				goto __cleanup_rtm;
++			}
++
++			rtm_be = kzalloc(sizeof(*rtm_be), GFP_KERNEL);
++			if (!rtm_be) {
++				ret = -ENOMEM;
++				goto __cleanup_rtm;
++			}
++
++			rtm_be->trig = trig_be;
++			trig_be->rtm[substream->stream] = rtm_be;
++			break;
++		}
++		if (i == priv->trig_count) {
++			dev_warn(rtd->dev, "Trigger not found for BE DAI %s\n", dai_be->name);
++			continue;
++		}
++	}
++
++	return 0;
++
++__cleanup_rtm:
++	for_each_dpcm_be_rollback(rtd, substream->stream, dpcm) {
++		struct snd_soc_pcm_runtime *be = dpcm->be;
++		struct snd_soc_dai *dai_be = asoc_rtd_to_cpu(be, 0);
++		struct snd_pcm_substream *substream_be;
++		int i;
++
++		if (dpcm->fe != rtd)
++			continue;
++
++		substream_be = snd_soc_dpcm_get_substream(be, substream->stream);
++		if (!substream_be)
++			continue;
++
++		for (i = 0; i < priv->trig_count; i++) {
++			struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++
++			if (!trig_be->phandle || trig_be->phandle->np != dai_be->dev->of_node)
++				continue;
++
++			if (!trig_be->rtm[substream->stream])
++				break;
++
++			kfree(trig_be->rtm[substream->stream]);
++			trig_be->rtm[substream->stream] = NULL;
++		}
++	}
++
++	return ret;
++}
++
++static void mchp_asrc_shutdown(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	struct mchp_asrc_dev *priv = snd_soc_dai_get_drvdata(dai);
++	struct snd_soc_dpcm *dpcm;
++	int i;
++
++	for_each_dpcm_be(rtd, substream->stream, dpcm) {
++		struct snd_soc_pcm_runtime *be = dpcm->be;
++		struct snd_soc_dai *dai_be = asoc_rtd_to_cpu(be, 0);
++		struct snd_pcm_substream *substream_be;
++
++		if (dpcm->fe != rtd)
++			continue;
++
++		substream_be = snd_soc_dpcm_get_substream(be, substream->stream);
++		if (!substream_be)
++			continue;
++
++		for (i = 0; i < priv->trig_count; i++) {
++			struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++
++			if (!trig_be->phandle || trig_be->phandle->np != dai_be->dev->of_node)
++				continue;
++
++			kfree(trig_be->rtm[substream->stream]);
++			trig_be->rtm[substream->stream] = NULL;
++			break;
++		}
++	}
++}
++
++static u32 mchp_asrc_vbps_to_reg(int vbps, int block)
++{
++	switch (vbps) {
++	case 8:
++		return MCHP_ASRC_VBPS_8_BIT(block);
++	case 10:
++		return MCHP_ASRC_VBPS_10_BIT(block);
++	case 12:
++		return MCHP_ASRC_VBPS_12_BIT(block);
++	case 14:
++		return MCHP_ASRC_VBPS_14_BIT(block);
++	case 16:
++		return MCHP_ASRC_VBPS_16_BIT(block);
++	case 18:
++		return MCHP_ASRC_VBPS_18_BIT(block);
++	case 20:
++		return MCHP_ASRC_VBPS_20_BIT(block);
++	case 24:
++		return MCHP_ASRC_VBPS_24_BIT(block);
++	case 32:
++		return MCHP_ASRC_VBPS_32_BIT(block);
++	default:
++		return 0;
++	}
++}
++
++static int mchp_asrc_bes_get(struct mchp_asrc_dev *priv, struct snd_pcm_substream *substream,
++			     struct list_head *head, bool set_trig)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	struct snd_soc_dpcm *dpcm;
++	int i;
++
++	for_each_dpcm_be(rtd, substream->stream, dpcm) {
++		struct snd_soc_pcm_runtime *be = dpcm->be;
++		struct snd_soc_dai *dai = asoc_rtd_to_cpu(be, 0);
++		struct snd_pcm_substream *substream_be;
++
++		if (dpcm->fe != rtd)
++			continue;
++
++		substream_be = snd_soc_dpcm_get_substream(be, substream->stream);
++		if (!substream_be)
++			continue;
++
++		dev_dbg(rtd->dev,
++			"%s() BE DAI %s: (dpcm_params) rate=%u format=%#x width=%u channels=%u\n",
++			__func__, dai->name,
++			params_rate(&be->dpcm[substream->stream].hw_params),
++			params_format(&be->dpcm[substream->stream].hw_params),
++			params_width(&be->dpcm[substream->stream].hw_params),
++			params_channels(&be->dpcm[substream->stream].hw_params));
++
++		for (i = 0; i < priv->trig_count; i++) {
++			struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++			struct mchp_asrc_be_rtm *rtm_be;
++
++			if (!trig_be->phandle || trig_be->phandle->np != dai->dev->of_node)
++				continue;
++
++			dev_dbg(priv->dev, "BE found in triger list with id %d\n",
++				trig_be->idx);
++
++			rtm_be = trig_be->rtm[substream->stream];
++			if (set_trig)
++				rtm_be->trig = trig_be;
++
++			rtm_be->hw_params = &be->dpcm[substream->stream].hw_params;
++
++			/* keep the order */
++			list_add_tail(&rtm_be->list, head);
++			break;
++		}
++
++		if (i == priv->trig_count) {
++			dev_err(rtd->dev, "no BE trigger found for DAI %s\n", dai->name);
++			return -EINVAL;
++		}
++	}
++
++	return 0;
++}
++
++static int mchp_asrc_validate_bes(struct mchp_asrc_dev *priv, struct list_head *head, int channels)
++{
++	struct mchp_asrc_be_rtm *rtm_be;
++	int dsps_req = (channels + 1) / 2;
++	int ch_be_sum = 0;
++	int dsps_avail;
++	int dsps_prev_be = MCHP_ASRC_NB_STEREO_CH;
++	u32 reg;
++
++	/* get the number of free DSPs */
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &reg);
++	dsps_avail = MCHP_ASRC_NB_STEREO_CH - hweight32(reg & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	if (dsps_req && dsps_avail < dsps_req) {
++		dev_err(priv->dev, "Not enough DSPs available (%d) to play %d audio channel(s)\n",
++			dsps_avail, channels);
++		return -EBUSY;
++	}
++
++	/* the number of DSPs needed for each BE needs to be in a descending order */
++	list_for_each_entry(rtm_be, head, list) {
++		int ch_be = params_channels(rtm_be->hw_params);
++
++		if ((ch_be + 1) / 2 > dsps_prev_be) {
++			dev_err(priv->dev,
++				"the nr of DSPs needed for each BE is not in a descending order\n");
++			return -EINVAL;
++		}
++		ch_be_sum += ch_be;
++		dsps_prev_be = (ch_be + 1) / 2;
++	}
++
++	/*
++	 * the number of channels on FE needs to be the same with
++	 * the one used on all BEs
++	 */
++	if (channels && channels != ch_be_sum) {
++		dev_err(priv->dev, "FE uses %d channels, BEs uses %d channels\n",
++			channels, ch_be_sum);
++		return -EINVAL;
++	}
++
++	return ch_be_sum;
++}
++
++static int mchp_asrc_is_tc_valid(struct mchp_asrc_pcm_priv *pcm, struct xmit_ch *tc,
++				 int single_aif_is_in, int thr_opmode, int rhr_opmode,
++				 int *aif, int aif_nr)
++{
++	struct opmode_to_slot const *be_opm;
++	int *be_chan;
++	int fe_chan_count, be_chan_count;
++	int i;
++
++	/* for now we support only one FE */
++	/* one-to-many scenario */
++	if (single_aif_is_in) {
++		be_chan = tc->rhr_ch;
++		fe_chan_count = tc->thr_ch_count;
++		be_chan_count = tc->rhr_ch_count;
++		be_opm = &asrc_map[rhr_opmode];
++	} else {
++	/* many-to-one scenario */
++		be_chan = tc->thr_ch;
++		fe_chan_count = tc->rhr_ch_count;
++		be_chan_count = tc->thr_ch_count;
++		be_opm = &asrc_map[thr_opmode];
++	}
++
++	if (fe_chan_count != 1 || aif_nr != be_chan_count)
++		return -EINVAL;
++
++	for (i = 0; i < aif_nr; i++) {
++		int dsps_avail = be_opm->slot[be_chan[i]].dsp_count;
++
++		if (dsps_avail != aif[i])
++			return -EINVAL;
++	}
++
++	tc->in_use = true;
++
++	return 0;
++}
++
++static struct xmit_ch *
++mchp_asrc_find_tc(struct mchp_asrc_pcm_priv *pcm, int dsps_req, int single_aif_is_in,
++		  int thr_opmode, int rhr_opmode, int *aif, int aif_nr)
++{
++	struct opmode *current_conf = &ch_conf[thr_opmode][rhr_opmode];
++	int i;
++	int ret;
++
++	for (i = 0; i < current_conf->tc_count; i++) {
++		struct xmit_ch *tc = &current_conf->tc[i];
++
++		if (tc->in_use || dsps_req != tc->dsps_used)
++			continue;
++
++		/* the first slot is used both as FE and BE */
++		ret = mchp_asrc_is_tc_valid(pcm, tc, single_aif_is_in, thr_opmode, rhr_opmode,
++					    aif, aif_nr);
++		if (!ret)
++			return tc;
++	}
++
++	return NULL;
++}
++
++static int mchp_asrc_tc_get(struct mchp_asrc_dev *priv, struct snd_soc_dai *dai)
++{
++	int aif_in[MCHP_ASRC_NB_STEREO_CH] = {0};
++	int aif_out[MCHP_ASRC_NB_STEREO_CH] = {0};
++	int aif_in_nr = 0;
++	int aif_out_nr = 0;
++	struct mchp_asrc_be_rtm *rtm_be;
++	int dsps_in = 0, dsps_out = 0;
++	struct xmit_ch *tc;
++	int thr, rhr;
++	int *aif, aif_nr;
++	bool single_aif_is_in;
++	struct mchp_asrc_pcm_priv *pcm = priv->pcm[dai->id];
++	int i;
++
++	/* both OPMODES must be set, or none */
++	if (priv->thr_opmode * priv->rhr_opmode < 0)
++		return -EINVAL;
++
++	/* get no of DSPs needed for each IN and OUT AIFs */
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++		int dsps = (params_channels(rtm_be->hw_params) + 1) / 2;
++
++		aif_in[aif_in_nr++] = dsps;
++
++		dev_dbg(priv->dev, "AIF %s needs %d DSPs, index %d\n",
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end",
++			dsps, aif_in_nr - 1);
++	}
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++		int dsps = (params_channels(rtm_be->hw_params) + 1) / 2;
++
++		aif_out[aif_out_nr++] = dsps;
++
++		dev_dbg(priv->dev, "AIF %s needs %d DSPs, index %d\n",
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end",
++			dsps, aif_out_nr - 1);
++	}
++
++	if (aif_in_nr == 1) {
++		single_aif_is_in = true;
++		aif = aif_out;
++		aif_nr = aif_out_nr;
++	} else if (aif_out_nr == 1) {
++		single_aif_is_in = false;
++		aif = aif_in;
++		aif_nr = aif_in_nr;
++	} else {
++		dev_err(priv->dev,
++			"PCM %s (de)mux %d -> %d AIFs; do not use many-to-many\n",
++			dai->name, aif_in_nr, aif_out_nr);
++		return -EINVAL;
++	}
++
++	for (i = 0; i < aif_in_nr; i++)
++		dsps_in += aif_in[i];
++	for (i = 0; i < aif_out_nr; i++)
++		dsps_out += aif_out[i];
++	if (dsps_in != dsps_out) {
++		dev_err(priv->dev, "%d -> %d DSPs; number needs to match\n",
++			dsps_in, dsps_out);
++		return -EINVAL;
++	}
++
++	/* the OPMODEs are already set, check if there are free transmit channels */
++	if (priv->thr_opmode != -1) {
++		thr = priv->thr_opmode;
++		rhr = priv->rhr_opmode;
++		tc = mchp_asrc_find_tc(pcm, dsps_in, single_aif_is_in, thr, rhr,
++				       aif, aif_nr);
++		if (tc)
++			goto __found_tc;
++
++		/* already selected opmode is not ok for FE */
++		dev_err(priv->dev, "no compatible transmit channels left in THR/RHR opmode %d/%d\n",
++			priv->thr_opmode, priv->rhr_opmode);
++		return -EBUSY;
++	}
++	for (thr = 0; thr < MCHP_ASRC_OPMODE_MAX; thr++) {
++		for (rhr = 0; rhr < MCHP_ASRC_OPMODE_MAX; rhr++) {
++			tc = mchp_asrc_find_tc(pcm, dsps_in, single_aif_is_in, thr,
++					       rhr, aif, aif_nr);
++			if (tc)
++				goto __found_tc_init;
++		}
++	}
++
++	return -EINVAL;
++
++__found_tc_init:
++	dev_dbg(priv->dev, "%s() opmodes THR %d RHR %d\n", __func__,
++		thr, rhr);
++	priv->thr_opmode = thr;
++	priv->rhr_opmode = rhr;
++	regmap_update_bits(priv->regmap, MCHP_ASRC_CH_CONF,
++			   MCHP_ASRC_CH_CONF_THROPMODE_MASK |
++			   MCHP_ASRC_CH_CONF_RHROPMODE_MASK,
++			   MCHP_ASRC_CH_CONF_THROPMODE(thr) |
++			   MCHP_ASRC_CH_CONF_RHROPMODE(rhr));
++__found_tc:
++#ifdef DEBUG
++	dev_dbg(priv->dev, "%s() transmit channels:\n", __func__);
++	for (i = 0; i < tc->thr_ch_count; i++)
++		dev_dbg(priv->dev, "%s() %d, ", __func__, tc->thr_ch[i]);
++	dev_dbg(priv->dev, "%s() receive channels:\n", __func__);
++	for (i = 0; i < tc->rhr_ch_count; i++)
++		dev_dbg(priv->dev, "%s() %d, ", __func__, tc->rhr_ch[i]);
++#endif
++	/* select one FE slot, the first one */
++	pcm->tc = tc;
++	return 0;
++}
++
++static void mchp_asrc_tc_free(struct mchp_asrc_dev *priv, struct mchp_asrc_pcm_priv *pcm)
++{
++	struct opmode *op;
++	int i;
++
++	pcm->tc->in_use = false;
++
++	op = &ch_conf[priv->thr_opmode][priv->rhr_opmode];
++	for (i = 0; i < op->tc_count; i++) {
++		/* do not clear OPMODES if there are running PCMs */
++		if (op->tc[i].in_use)
++			return;
++	}
++
++	priv->thr_opmode = -1;
++	priv->rhr_opmode = -1;
++	regmap_update_bits(priv->regmap, MCHP_ASRC_CH_CONF,
++			   MCHP_ASRC_CH_CONF_THROPMODE_MASK | MCHP_ASRC_CH_CONF_RHROPMODE_MASK, 0);
++}
++
++/* apply HW DMA Chunk Size limitations */
++static void mchp_asrc_maxburst_limit(int thr_opmode, int rhr_opmode, bool is_mono,
++				     int *maxburst)
++{
++	if ((thr_opmode == 0 || rhr_opmode == 0) &&
++	    *maxburst > 4) {
++		if (is_mono)
++			*maxburst = 4;
++		else
++			*maxburst = 8;
++		return;
++	}
++	if ((thr_opmode != 4 || rhr_opmode != 4) && is_mono && *maxburst > 8)
++		*maxburst = 8;
++}
++
++static int mchp_asrc_hw_params(struct snd_pcm_substream *substream,
++			       struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
++{
++	struct mchp_asrc_dev *priv = snd_soc_dai_get_drvdata(dai);
++	struct mchp_asrc_dmaengine_dai_dma *dma;
++	struct mchp_asrc_dmaengine_be_dma *dma_be, *tmp;
++	struct mchp_asrc_pcm_priv *pcm;
++	int width = params ? params_width(params) : 0;
++	int src_width, dst_width;
++	unsigned long rate;
++	unsigned int fs = params ? params_rate(params) : 0;
++	unsigned int max_sr = fs;
++	bool is_playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	u32 ratio;
++	unsigned int channels = params ? params_channels(params) : 0;
++	u32 ch_conf = 0;
++	u32 ch_conf_mask = 0;
++	int ret;
++	u32 mr;
++	u32 trig = 0, trig_mask = 0;
++	u32 vbps_in = 0, vbps_out = 0, vbps_mask = 0;
++	struct mchp_asrc_be_rtm *rtm_be;
++	int dsp;
++	int dsps_running;
++	int ratio_min;
++	struct list_head *list_head_bes;
++	int i;
++	struct opmode_to_slot const *be_opm;
++	struct xmit_ch *tc;
++	bool is_mono = false;
++
++	dev_dbg(priv->dev, "%s() DAI %s id %d rate=%u format=%#x width=%u channels=%u\n",
++		__func__, dai->name, dai->id, fs, params ? params_format(params) : 0,
++		width, channels);
++
++	/* on a hostless link, pcm might be allocated previously */
++	if (priv->pcm[dai->id]) {
++		if (params) {
++			dev_err(priv->dev, "PCM running on id %d\n", dai->id);
++			return -EBUSY;
++		}
++		pcm = priv->pcm[dai->id];
++		pcm->refcount++;
++	} else {
++		pcm = kzalloc(sizeof(*pcm), GFP_KERNEL);
++		if (!pcm)
++			return -ENOMEM;
++		if (!params)
++			pcm->is_hostless = true;
++
++		INIT_LIST_HEAD(&pcm->list_head_in);
++		INIT_LIST_HEAD(&pcm->list_head_out);
++		INIT_LIST_HEAD(&pcm->dma.dma_in_list);
++		INIT_LIST_HEAD(&pcm->dma.dma_out_list);
++		pcm->refcount++;
++		priv->pcm[dai->id] = pcm;
++	}
++	dma = &pcm->dma;
++
++	if (is_playback) {
++		/* for playback, this callback is for the OUT BEs */
++		list_head_bes = &pcm->list_head_out;
++	} else {
++		/* for capture, this callback is for the IN BEs */
++		list_head_bes = &pcm->list_head_in;
++	}
++
++	INIT_LIST_HEAD(list_head_bes);
++
++	ret = mchp_asrc_bes_get(priv, substream, list_head_bes, true);
++	if (ret < 0)
++		goto __cleanup_free_pcm;
++
++	dev_dbg(priv->dev, "%s() BE triggers:\n", __func__);
++#ifdef DEBUG
++	list_for_each_entry(rtm_be, list_head_bes, list) {
++		struct mchp_asrc_be_trigger *trig_be = rtm_be->trig;
++
++		dev_dbg(priv->dev, "%s, index %d\n", trig_be->phandle->np->full_name, trig_be->idx);
++	}
++#endif
++
++	ret = mchp_asrc_validate_bes(priv, list_head_bes, channels);
++	if (ret < 0)
++		goto __cleanup_bes;
++
++	if (!pcm->is_hostless) {
++		pcm->rtm_fe.hw_params = params;
++		pcm->rtm_fe.trig = NULL;
++
++		/* keep the order */
++		if (is_playback)
++			list_add_tail(&pcm->rtm_fe.list, &pcm->list_head_in);
++		else
++			list_add_tail(&pcm->rtm_fe.list, &pcm->list_head_out);
++	}
++
++	if (list_empty(&pcm->list_head_in) || list_empty(&pcm->list_head_out)) {
++		/* incomplete BE-to-BE link; return and wait for the BEs on the other stream */
++		dev_dbg(priv->dev, "%s() first half for %s finished\n", __func__,
++			is_playback ? "playback" : "capture");
++		goto __skip_conf;
++	}
++
++	ret = mchp_asrc_tc_get(priv, dai);
++	if (ret < 0)
++		goto __cleanup_bes;
++
++	tc = pcm->tc;
++
++	/* check if DSPs needed by this TC are free */
++	for (i = 0; i < tc->thr_ch_count; i++) {
++		struct mchp_asrc_slot const *slot = &asrc_map[priv->thr_opmode].slot[tc->thr_ch[i]];
++		int j;
++
++		for (j = slot->first_dsp; j < slot->first_dsp + slot->dsp_count; j++) {
++			if (priv->dsp[j].dma) {
++				dev_err(priv->dev, "DSP %d already in use\n", j);
++				ret = -EBUSY;
++				goto __cleanup_free_tc;
++			}
++		}
++	}
++
++	/* reserve DSPs */
++	for (i = 0; i < tc->thr_ch_count; i++) {
++		struct mchp_asrc_slot const *slot = &asrc_map[priv->thr_opmode].slot[tc->thr_ch[i]];
++		int j;
++
++		for (j = slot->first_dsp; j < slot->first_dsp + slot->dsp_count; j++)
++			priv->dsp[j].dma = dma;
++	}
++
++	/* assign in and out slots for AIFs */
++	be_opm = &asrc_map[priv->rhr_opmode];
++	i = 0;
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++		dev_dbg(priv->dev, "%s(): AIF %s slot id %d\n", __func__,
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : dai->name,
++		tc->rhr_ch[i]);
++		rtm_be->slot = &be_opm->slot[tc->rhr_ch[i++]];
++	}
++
++	be_opm = &asrc_map[priv->thr_opmode];
++	i = 0;
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++		dev_dbg(priv->dev, "%s(): AIF %s slot id %d\n", __func__,
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : dai->name,
++			tc->thr_ch[i]);
++		rtm_be->slot = &be_opm->slot[tc->thr_ch[i++]];
++	}
++
++	/* set mono DSPs, trigger index and valid bits */
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++		struct mchp_asrc_be_trigger *trig_be = rtm_be->trig;
++		struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++		int chan_be = params_channels(rtm_be->hw_params);
++		u32 idx = trig_be ? trig_be->idx : 0;
++		int physical_width = params_physical_width(rtm_be->hw_params) / 8;
++		int period_bytes = params_period_size(rtm_be->hw_params) *
++			params_channels(rtm_be->hw_params) * physical_width;
++		int maxburst = mchp_asrc_period_to_burst(period_bytes, physical_width);
++
++		/* treat odd streams, set only last DSP as mono */
++		if (chan_be % 2) {
++			dsp = slot_be->first_dsp + slot_be->dsp_count - 1;
++			ch_conf |= MCHP_ASRC_CH_CONF_MONO(dsp);
++			ch_conf_mask |= MCHP_ASRC_CH_CONF_MONO(dsp);
++			is_mono = true;
++		}
++
++		for (dsp = slot_be->first_dsp;
++		     dsp < slot_be->first_dsp + slot_be->dsp_count; dsp++) {
++			trig_mask |= MCHP_ASRC_TRIG_TRIGSELIN_MASK(dsp);
++			trig |= MCHP_ASRC_TRIG_TRIGSELIN(idx, dsp);
++		}
++
++		src_width = params_width(rtm_be->hw_params);
++		for (dsp = slot_be->first_dsp; dsp < slot_be->first_dsp + slot_be->dsp_count;
++		     dsp++) {
++			vbps_mask |= MCHP_ASRC_VBPS_MASK(dsp);
++			vbps_in |= mchp_asrc_vbps_to_reg(src_width, dsp);
++		}
++
++		if (max_sr < params_rate(rtm_be->hw_params))
++			max_sr = params_rate(rtm_be->hw_params);
++
++		if (pcm->maxburst)
++			pcm->maxburst = min(pcm->maxburst, maxburst);
++		else
++			pcm->maxburst = maxburst;
++
++		dev_dbg(priv->dev, "%s: period bytes %d, width %d -> maxburst %d\n",
++			trig_be ? trig_be->phandle->np->full_name : dai->name,
++			period_bytes, physical_width, maxburst);
++	}
++
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++		struct mchp_asrc_be_trigger *trig_be = rtm_be->trig;
++		struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++		int chan_be = params_channels(rtm_be->hw_params);
++		int physical_width = params_physical_width(rtm_be->hw_params) / 8;
++		int period_bytes = params_period_size(rtm_be->hw_params) *
++			params_channels(rtm_be->hw_params) * physical_width;
++		int maxburst = mchp_asrc_period_to_burst(period_bytes, physical_width);
++		u32 idx = trig_be ? trig_be->idx : 0;
++
++		/* treat odd streams, set only last DSP as mono */
++		if (chan_be % 2) {
++			dsp = slot_be->first_dsp + slot_be->dsp_count - 1;
++			ch_conf |= MCHP_ASRC_CH_CONF_MONO(dsp);
++			ch_conf_mask |= MCHP_ASRC_CH_CONF_MONO(dsp);
++			is_mono = true;
++		}
++
++		for (dsp = slot_be->first_dsp;
++		     dsp < slot_be->first_dsp + slot_be->dsp_count; dsp++) {
++			trig_mask |= MCHP_ASRC_TRIG_TRIGSELOUT_MASK(dsp);
++			trig |= MCHP_ASRC_TRIG_TRIGSELOUT(idx, dsp);
++		}
++
++		dst_width = params_width(rtm_be->hw_params);
++		for (dsp = slot_be->first_dsp; dsp < slot_be->first_dsp + slot_be->dsp_count;
++		     dsp++) {
++			vbps_mask |= MCHP_ASRC_VBPS_MASK(dsp);
++			vbps_out |= mchp_asrc_vbps_to_reg(dst_width, dsp);
++		}
++
++		if (max_sr < params_rate(rtm_be->hw_params))
++			max_sr = params_rate(rtm_be->hw_params);
++
++		if (pcm->maxburst)
++			pcm->maxburst = min(pcm->maxburst, maxburst);
++		else
++			pcm->maxburst = maxburst;
++
++		dev_dbg(priv->dev, "%s: period bytes %d, width %d -> maxburst %d\n",
++			trig_be ? trig_be->phandle->np->full_name : dai->name,
++			period_bytes, physical_width, maxburst);
++	}
++
++	mchp_asrc_maxburst_limit(priv->thr_opmode, priv->rhr_opmode, is_mono, &pcm->maxburst);
++	dev_dbg(priv->dev, "maxburst value to be used by all DSPs: %d\n", pcm->maxburst);
++
++	/* set DMAengine data for each IN/OUT AIF */
++	INIT_LIST_HEAD(&dma->dma_in_list);
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++		struct mchp_asrc_be_trigger *trig_be = rtm_be->trig;
++		struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++		struct snd_dmaengine_dai_dma_data *dma_data_be;
++
++		dma_be = kzalloc(sizeof(*dma_be), GFP_KERNEL);
++		if (!dma_be) {
++			ret = -ENOMEM;
++			goto __cleanup_dma_bes;
++		}
++
++		dma_be->phandle = trig_be ? trig_be->phandle : NULL;
++		dma_data_be = &dma_be->dma_data;
++		dma_data_be->addr = (dma_addr_t)priv->mem->start + MCHP_ASRC_THR(slot_be->slot_id);
++		dma_data_be->chan_name = kasprintf(GFP_KERNEL, "tx%d", slot_be->slot_id);
++		if (!dma_data_be->chan_name) {
++			ret = -ENOMEM;
++			goto __cleanup_dma_bes;
++		}
++		dma_data_be->maxburst = pcm->maxburst;
++
++		/* keep the order of the BEs */
++		list_add_tail(&dma_be->list, &dma->dma_in_list);
++
++		dev_dbg(priv->dev,
++			"%s() IN AIF %s: DMA addr %pad DMA chan %s DMA maxburst %d\n",
++			__func__, trig_be ? trig_be->phandle->np->full_name : dai->name,
++			&dma_data_be->addr, dma_data_be->chan_name, dma_data_be->maxburst);
++	}
++
++	INIT_LIST_HEAD(&dma->dma_out_list);
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++		struct mchp_asrc_be_trigger *trig_be = rtm_be->trig;
++		struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++		struct snd_dmaengine_dai_dma_data *dma_data_be;
++		int dsp;
++
++		dma_be = kzalloc(sizeof(*dma_be), GFP_KERNEL);
++		if (!dma_be) {
++			ret = -ENOMEM;
++			goto __cleanup_dma_bes;
++		}
++
++		dma_be->phandle = trig_be ? trig_be->phandle : NULL;
++		dma_data_be = &dma_be->dma_data;
++		dma_data_be->addr = (dma_addr_t)priv->mem->start + MCHP_ASRC_RHR(slot_be->slot_id);
++		dma_data_be->chan_name = kasprintf(GFP_KERNEL, "rx%d", slot_be->slot_id);
++		if (!dma_data_be->chan_name) {
++			ret = -ENOMEM;
++			goto __cleanup_dma_bes;
++		}
++		dma_data_be->maxburst = pcm->maxburst;
++
++		 /* needed only once, since the same DPSs are used for IN and OUT AIFs */
++		for (dsp = slot_be->first_dsp; dsp < slot_be->first_dsp + slot_be->dsp_count;
++		     dsp++) {
++			ch_conf |= mchp_asrc_burst_to_chunk(dsp,
++							    pcm->maxburst);
++			ch_conf_mask |= MCHP_ASRC_CH_CONF_CHUNK_MASK(dsp);
++		}
++
++		/* keep the order of the BEs */
++		list_add_tail(&dma_be->list, &dma->dma_out_list);
++
++		dev_dbg(priv->dev,
++			"%s() OUT AIF %s: DMA addr %pad DMA chan %s DMA maxburst %d\n",
++			__func__, trig_be ? trig_be->phandle->np->full_name : dai->name,
++			&dma_data_be->addr, dma_data_be->chan_name, dma_data_be->maxburst);
++	}
++
++	/* get the number of free DSPs */
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &mr);
++	dsps_running = hweight32(mr & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	/* GCLK could be set to a good value using assigned clocks or by a previous DPCM */
++	rate = clk_get_rate(priv->gclk);
++	if (!rate) {
++		dev_err(priv->dev, "Unable to get rate for gclk\n");
++		ret = -ENODEV;
++		goto __cleanup_dma_bes;
++	}
++	dev_dbg(priv->dev, "Current gclk rate: %lu\n", rate);
++
++	/* we assume GCLK is enabled if there are running DSPs */
++	if (dsps_running) {
++		if (mr & MCHP_ASRC_MR_GT96K)
++			ratio_min = MCHP_ASRC_GT96K_RATIO_MIN;
++		else
++			ratio_min = MCHP_ASRC_LT96K_RATIO_MIN;
++	} else {
++		if (max_sr > 96000) {
++			ratio_min = MCHP_ASRC_GT96K_RATIO_MIN;
++			regmap_update_bits(priv->regmap, MCHP_ASRC_MR, MCHP_ASRC_MR_GT96K,
++					   MCHP_ASRC_MR_GT96K);
++		} else {
++			ratio_min = MCHP_ASRC_LT96K_RATIO_MIN;
++		}
++	}
++	if (!dsps_running && ((rate % max_sr) || ratio_min > (rate / max_sr))) {
++		/* try to change GCLK if current value is not ok */
++		unsigned long round_rate = (unsigned long)ratio_min * max_sr;
++		unsigned long best_rate;
++		unsigned long diff;
++
++		for (rate = round_rate;
++		     rate <= (unsigned long)ratio_min * MCHP_ASRC_RATIO_MAX;
++		     rate += max_sr) {
++			round_rate = clk_round_rate(priv->gclk, rate);
++			if (diff > abs(round_rate - rate)) {
++				diff = abs(round_rate - rate);
++				best_rate = rate;
++			}
++			if (!diff)
++				break;
++		}
++
++		dev_dbg(priv->dev, "%s() trying to set GCLK to %lu\n", __func__, best_rate);
++		ret = clk_set_rate(priv->gclk, best_rate);
++		if (ret) {
++			dev_err(priv->dev, "unable to set GCLK rate: SR %u * ratio %lu\n",
++				max_sr, (best_rate / max_sr));
++			goto __cleanup_mr;
++		}
++	}
++
++	/* get real GCLK rate, to set the correct ratio */
++	rate = clk_get_rate(priv->gclk);
++	if (!rate) {
++		dev_err(priv->dev, "Unable to get rate for GCLK\n");
++		ret = -ENODEV;
++		goto __cleanup_mr;
++	}
++	dev_dbg(priv->dev, "Real GCLK rate: %lu\n", rate);
++
++	ret = clk_prepare_enable(priv->gclk);
++	if (ret < 0) {
++		dev_err(priv->dev, "unable to enable GCLK: %d\n", ret);
++		goto __cleanup_mr;
++	}
++
++	/* IN/OUT RATIO are not needed on a hostless PCM */
++	if (pcm->is_hostless)
++		goto __skip_inout;
++
++	/* set IN/OUT RATIO for all DSPs in the FE slot */
++	if (is_playback)
++		list_head_bes = &pcm->list_head_in;
++	else
++		list_head_bes = &pcm->list_head_out;
++
++	list_for_each_entry(rtm_be, list_head_bes, list) {
++		struct mchp_asrc_slot const *slot_fe = rtm_be->slot;
++
++		ratio = rate / params_rate(rtm_be->hw_params);
++		for (dsp = slot_fe->first_dsp; dsp < slot_fe->first_dsp + slot_fe->dsp_count;
++		     dsp++) {
++			if (is_playback) {
++				regmap_update_bits(priv->regmap, MCHP_ASRC_RATIO(dsp),
++						   MCHP_ASRC_RATIO_INRATIO_MASK,
++						   MCHP_ASRC_RATIO_INRATIO(ratio));
++			} else {
++				regmap_update_bits(priv->regmap, MCHP_ASRC_RATIO(dsp),
++						   MCHP_ASRC_RATIO_OUTRATIO_MASK,
++						   MCHP_ASRC_RATIO_OUTRATIO(ratio));
++			}
++		}
++	}
++
++__skip_inout:
++	dev_dbg(priv->dev, "writing TRIG %#x, VBPS_IN %#x, VBPS_OUT %#x, CH_CONF %#x\n",
++		trig & trig_mask, vbps_in & vbps_mask, vbps_out & vbps_mask,
++		ch_conf & ch_conf_mask);
++
++	regmap_update_bits(priv->regmap, MCHP_ASRC_TRIG, trig_mask, trig);
++	regmap_update_bits(priv->regmap, MCHP_ASRC_VBPS_IN, vbps_mask, vbps_in);
++	regmap_update_bits(priv->regmap, MCHP_ASRC_VBPS_OUT, vbps_mask, vbps_out);
++	regmap_update_bits(priv->regmap, MCHP_ASRC_CH_CONF, ch_conf_mask, ch_conf);
++
++	snd_soc_dai_init_dma_data(dai, dma, dma);
++__skip_conf:
++
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++		dev_dbg(priv->dev, "%s(): looking at IN %s\n", __func__,
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end");
++	}
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++		dev_dbg(priv->dev, "%s(): looking at OUT %s\n", __func__,
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end");
++	}
++	return 0;
++
++__cleanup_mr:
++	if (!dsps_running)
++		regmap_update_bits(priv->regmap, MCHP_ASRC_MR, MCHP_ASRC_MR_GT96K, 0);
++__cleanup_dma_bes:
++	list_for_each_entry_safe(dma_be, tmp, &dma->dma_in_list, list) {
++		list_del(&dma_be->list);
++		kfree(dma_be->dma_data.chan_name);
++		dma_be->dma_data.chan_name = NULL;
++		kfree(dma_be);
++	}
++	list_for_each_entry_safe(dma_be, tmp, &dma->dma_out_list, list) {
++		list_del(&dma_be->list);
++		kfree(dma_be->dma_data.chan_name);
++		dma_be->dma_data.chan_name = NULL;
++		kfree(dma_be);
++	}
++
++	list_for_each_entry(rtm_be, &pcm->list_head_in, list)
++		rtm_be->slot = NULL;
++	list_for_each_entry(rtm_be, &pcm->list_head_out, list)
++		rtm_be->slot = NULL;
++	for (i = 0; i < pcm->tc->thr_ch_count; i++) {
++		struct mchp_asrc_slot const *slot = &asrc_map[priv->thr_opmode].slot[tc->thr_ch[i]];
++		int j;
++
++		for (j = slot->first_dsp; j < slot->first_dsp + slot->dsp_count; j++)
++			priv->dsp[j].dma = NULL;
++	}
++__cleanup_free_tc:
++	mchp_asrc_tc_free(priv, pcm);
++__cleanup_bes:
++	if (is_playback)
++		INIT_LIST_HEAD(&pcm->list_head_out);
++	else
++		INIT_LIST_HEAD(&pcm->list_head_in);
++__cleanup_free_pcm:
++	pcm->refcount--;
++	if (!pcm->refcount) {
++		kfree(pcm);
++		priv->pcm[dai->id] = NULL;
++	}
++
++	return ret;
++}
++
++static int mchp_asrc_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
++{
++	struct mchp_asrc_dev *priv = snd_soc_dai_get_drvdata(dai);
++	struct mchp_asrc_dmaengine_be_dma *dma_be, *tmp;
++	struct mchp_asrc_dmaengine_dai_dma *dma;
++	struct mchp_asrc_be_rtm *rtm_be;
++	struct xmit_ch *tc;
++	struct list_head *list_head_fes;
++	bool is_playback = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	u32 val = 0;
++	u32 mask = 0;
++	u32 ch_conf_mask = 0;
++	int dsp;
++	struct mchp_asrc_pcm_priv *pcm = priv->pcm[dai->id];
++	bool are_dsps_running;
++	int i;
++
++	/* nothing to do if no pcm is available */
++	if (!pcm)
++		return 0;
++
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &val);
++	are_dsps_running = !!(val & MCHP_ASRC_MR_ASRCEN_MASK);
++
++	if (!pcm->is_hostless) {
++		if (is_playback)
++			list_head_fes = &pcm->list_head_in;
++		else
++			list_head_fes = &pcm->list_head_out;
++
++		list_for_each_entry(rtm_be, list_head_fes, list) {
++			struct mchp_asrc_slot const *slot_fe = rtm_be->slot;
++
++			for (dsp = slot_fe->first_dsp;
++			     dsp < slot_fe->first_dsp + slot_fe->dsp_count; dsp++) {
++				if (is_playback) {
++					regmap_update_bits(priv->regmap, MCHP_ASRC_RATIO(dsp),
++							   MCHP_ASRC_RATIO_INRATIO_MASK, 0);
++				} else {
++					regmap_update_bits(priv->regmap, MCHP_ASRC_RATIO(dsp),
++							   MCHP_ASRC_RATIO_OUTRATIO_MASK, 0);
++				}
++			}
++		}
++	}
++
++	if (pcm->refcount == 2 || !pcm->is_hostless) {
++		/* unset DMAengine data */
++		snd_soc_dai_init_dma_data(dai, NULL, NULL);
++
++		clk_disable_unprepare(priv->gclk);
++
++		/* cleanup BE channel names */
++		dma = &pcm->dma;
++		list_for_each_entry_safe(dma_be, tmp, &dma->dma_in_list, list) {
++			struct snd_dmaengine_dai_dma_data *dma_data_be;
++
++			list_del(&dma_be->list);
++			dma_data_be = &dma_be->dma_data;
++			kfree(dma_data_be->chan_name);
++			dma_data_be->chan_name = NULL;
++			kfree(dma_be);
++		}
++
++		/* free DSPs */
++		tc = pcm->tc;
++		for (i = 0; i < tc->thr_ch_count; i++) {
++			struct mchp_asrc_slot const *slot;
++			int j;
++
++			slot = &asrc_map[priv->thr_opmode].slot[tc->thr_ch[i]];
++			for (j = slot->first_dsp; j < slot->first_dsp + slot->dsp_count; j++)
++				priv->dsp[j].dma = NULL;
++		}
++		list_for_each_entry_safe(dma_be, tmp, &dma->dma_out_list, list) {
++			struct snd_dmaengine_dai_dma_data *dma_data_be;
++
++			list_del(&dma_be->list);
++			dma_data_be = &dma_be->dma_data;
++			kfree(dma_data_be->chan_name);
++			dma_data_be->chan_name = NULL;
++			kfree(dma_be);
++		}
++
++		/* free mono DSPs, trigger index, and chunk size */
++		list_for_each_entry(rtm_be, &pcm->list_head_in, list) {
++			struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++
++			for (dsp = slot_be->first_dsp;
++			     dsp < slot_be->first_dsp + slot_be->dsp_count; dsp++) {
++				ch_conf_mask |= MCHP_ASRC_CH_CONF_MONO(dsp);
++				mask |= MCHP_ASRC_TRIG_TRIGSELIN_MASK(dsp);
++			}
++			ch_conf_mask |= MCHP_ASRC_CH_CONF_CHUNK_MASK(slot_be->slot_id);
++			rtm_be->slot = NULL;
++		}
++		list_for_each_entry(rtm_be, &pcm->list_head_out, list) {
++			struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++
++			for (dsp = slot_be->first_dsp;
++			     dsp < slot_be->first_dsp + slot_be->dsp_count; dsp++) {
++				ch_conf_mask |= MCHP_ASRC_CH_CONF_MONO(dsp);
++				mask |= MCHP_ASRC_TRIG_TRIGSELOUT_MASK(dsp);
++			}
++			ch_conf_mask |= MCHP_ASRC_CH_CONF_CHUNK_MASK(slot_be->slot_id);
++			rtm_be->slot = NULL;
++		}
++
++		mchp_asrc_tc_free(priv, pcm);
++	}
++
++	pcm->refcount--;
++	if (!pcm->refcount) {
++		kfree(pcm);
++		priv->pcm[dai->id] = NULL;
++	}
++
++	if (!are_dsps_running)
++		regmap_update_bits(priv->regmap, MCHP_ASRC_MR, MCHP_ASRC_MR_GT96K, 0);
++
++	/* cleanup the triggers for the used DSPs */
++	regmap_update_bits(priv->regmap, MCHP_ASRC_TRIG, mask, 0);
++
++	/* cleanup CHUNK and MONO DSPs */
++	regmap_update_bits(priv->regmap, MCHP_ASRC_CH_CONF, ch_conf_mask, 0);
++
++	return 0;
++}
++
++#ifdef DEBUG
++static void mchp_asrc_reg_dump(struct mchp_asrc_dev *priv)
++{
++	int i;
++	u32 val;
++
++	regmap_read(priv->regmap, MCHP_ASRC_MR, &val);
++	dev_dbg(priv->dev, "%s() Mode register %#x\n", __func__, val);
++	for (i = 0; i < MCHP_ASRC_NB_STEREO_CH; i++) {
++		regmap_read(priv->regmap, MCHP_ASRC_RATIO(i), &val);
++		dev_dbg(priv->dev, "%s() Ratio%d register %#x\n", __func__, i, val);
++	}
++	regmap_read(priv->regmap, MCHP_ASRC_VBPS_IN, &val);
++	dev_dbg(priv->dev, "%s() VBPS in register %#x\n", __func__, val);
++	regmap_read(priv->regmap, MCHP_ASRC_VBPS_OUT, &val);
++	dev_dbg(priv->dev, "%s() VBPS out register %#x\n", __func__, val);
++	regmap_read(priv->regmap, MCHP_ASRC_CH_CONF, &val);
++	dev_dbg(priv->dev, "%s() Channel conf register %#x\n", __func__, val);
++	regmap_read(priv->regmap, MCHP_ASRC_TRIG, &val);
++	dev_dbg(priv->dev, "%s() Trigger sel register %#x\n", __func__, val);
++	for (i = 0; i < MCHP_ASRC_NB_STEREO_CH; i++) {
++		regmap_read(priv->regmap, MCHP_ASRC_IMR(i), &val);
++		dev_dbg(priv->dev, "%s() Interrupt mask register%d %#x\n", __func__, i, val);
++	}
++}
++#else
++static void mchp_asrc_reg_dump(struct mchp_asrc_dev *priv) {}
++#endif
++
++static void mchp_asrc_dsps_trigger(struct mchp_asrc_dev *priv, struct mchp_asrc_be_rtm *rtm_be,
++				   bool enable, u32 *mr)
++{
++	struct mchp_asrc_slot const *slot_be = rtm_be->slot;
++	u32 ir_reg = 0;
++	u32 ir = 0;
++	int dsp;
++
++	if (!slot_be) {
++		dev_dbg(priv->dev, "%s has no slot\n",
++			rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end");
++		return;
++	}
++#ifdef DEBUG
++	ir |= MCHP_ASRC_IR_RXUDR | MCHP_ASRC_IR_RXOVR | MCHP_ASRC_IR_TXUDR | MCHP_ASRC_IR_TXOVR;
++#endif
++
++	if (enable)
++		ir |= MCHP_ASRC_IR_LOCK;
++
++	dev_dbg(priv->dev, "%s() DSPs %s for BE %s:\n", __func__, enable ? "enabled" : "disabled",
++		rtm_be->trig ? rtm_be->trig->phandle->np->full_name : "front-end");
++
++	for (dsp = slot_be->first_dsp; dsp < slot_be->first_dsp + slot_be->dsp_count; dsp++) {
++		/* Enable interrupt and wait for DPLL LOCK */
++		if (enable)
++			ir_reg = MCHP_ASRC_IER(dsp);
++		else
++			ir_reg = MCHP_ASRC_IDR(dsp);
++		regmap_update_bits(priv->regmap, ir_reg, ir, ir);
++		*mr |= MCHP_ASRC_MR_ASRCEN(dsp);
++		if (enable)
++			priv->dsp[dsp].dma->unlocked_dsps++;
++		dev_dbg(priv->dev, "%s() %d\n", __func__, dsp);
++	}
++}
++
++static int mchp_asrc_trigger(struct snd_pcm_substream *substream, int cmd, struct snd_soc_dai *dai)
++{
++	struct mchp_asrc_dev *priv = snd_soc_dai_get_drvdata(dai);
++	struct mchp_asrc_pcm_priv *pcm = priv->pcm[dai->id];
++	struct mchp_asrc_dmaengine_dai_dma *dma;
++	struct mchp_asrc_be_rtm *rtm_be;
++	u32 mr = 0;
++
++	if (!pcm) {
++		dev_err(priv->dev, "PCM not allocated for id %d\n", dai->id);
++		return -EINVAL;
++	}
++
++	dma = &pcm->dma;
++	switch (cmd) {
++	case SNDRV_PCM_TRIGGER_START:
++	case SNDRV_PCM_TRIGGER_RESUME:
++	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
++		list_for_each_entry(rtm_be, &pcm->list_head_in, list)
++			mchp_asrc_dsps_trigger(priv, rtm_be, true, &mr);
++		list_for_each_entry(rtm_be, &pcm->list_head_out, list)
++			mchp_asrc_dsps_trigger(priv, rtm_be, true, &mr);
++		dma->unlocked_dsps /= 2;
++		regmap_update_bits(priv->regmap, MCHP_ASRC_MR, mr, mr);
++		mchp_asrc_reg_dump(priv);
++		return 0;
++	case SNDRV_PCM_TRIGGER_STOP:
++	case SNDRV_PCM_TRIGGER_SUSPEND:
++	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
++		list_for_each_entry(rtm_be, &pcm->list_head_out, list)
++			mchp_asrc_dsps_trigger(priv, rtm_be, false, &mr);
++		list_for_each_entry(rtm_be, &pcm->list_head_in, list)
++			mchp_asrc_dsps_trigger(priv, rtm_be, false, &mr);
++
++		regmap_update_bits(priv->regmap, MCHP_ASRC_MR, mr, 0);
++		mchp_asrc_reg_dump(priv);
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static const struct snd_soc_dai_ops mchp_asrc_dai_ops = {
++	.startup	= mchp_asrc_startup,
++	.trigger	= mchp_asrc_trigger,
++	.hw_params	= mchp_asrc_hw_params,
++	.hw_free	= mchp_asrc_hw_free,
++	.shutdown	= mchp_asrc_shutdown,
++};
++
++#define MCHP_ASRC_RATES	SNDRV_PCM_RATE_8000_192000
++#define MCHP_ASRC_FORMATS	(SNDRV_PCM_FMTBIT_S8 | \
++				 SNDRV_PCM_FMTBIT_S16_LE | \
++				 SNDRV_PCM_FMTBIT_S18_3LE | \
++				 SNDRV_PCM_FMTBIT_S20_3LE | \
++				 SNDRV_PCM_FMTBIT_S24_3LE | \
++				 SNDRV_PCM_FMTBIT_S24_LE | \
++				 SNDRV_PCM_FMTBIT_S32_LE)
++
++static struct snd_soc_dai_driver mchp_asrc_dai[] = {
++	{
++		.name = "asrc-pcm-1",
++		.playback = {
++			.stream_name = "ASRC-Playback 1",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.capture = {
++			.stream_name = "ASRC-Capture 1",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.ops = &mchp_asrc_dai_ops,
++	},
++	{
++		.name = "asrc-pcm-2",
++		.playback = {
++			.stream_name = "ASRC-Playback 2",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.capture = {
++			.stream_name = "ASRC-Capture 2",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.ops = &mchp_asrc_dai_ops,
++	},
++	{
++		.name = "asrc-pcm-3",
++		.playback = {
++			.stream_name = "ASRC-Playback 3",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.capture = {
++			.stream_name = "ASRC-Capture 3",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.ops = &mchp_asrc_dai_ops,
++	},
++	{
++		.name = "asrc-pcm-4",
++		.playback = {
++			.stream_name = "ASRC-Playback 4",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.capture = {
++			.stream_name = "ASRC-Capture 4",
++			.channels_min = 1,
++			.channels_max = 8,
++			.rates = MCHP_ASRC_RATES,
++			.formats = MCHP_ASRC_FORMATS,
++		},
++		.ops = &mchp_asrc_dai_ops,
++	},
++};
++
++static void mchp_asrc_block_pending_intr(struct mchp_asrc_dev *priv,
++					 u32 pending, int block)
++{
++	struct device *dev = priv->dev;
++
++#ifdef DEBUG
++	if (pending & MCHP_ASRC_IR_RXRDY)
++		dev_info_ratelimited(dev, "block %d: RX Ready detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_RXEMPTY)
++		dev_warn_ratelimited(dev, "block %d: RX FIFO Empty detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_RXFULL)
++		dev_warn_ratelimited(dev, "block %d: RX FIFO Full detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_RXCHUNK)
++		dev_info_ratelimited(dev, "block %d: RX FIFO Chunk detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXRDY)
++		dev_info_ratelimited(dev, "block %d: TX Ready detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXEMPTY)
++		dev_warn_ratelimited(dev, "block %d: TX FIFO Empty detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXFULL)
++		dev_warn_ratelimited(dev, "block %d: TX FIFO Full detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXCHUNK)
++		dev_info_ratelimited(dev, "block %d: TX FIFO Chunk detected\n", block);
++
++#endif
++	if (pending & MCHP_ASRC_IR_RXUDR)
++		dev_err_ratelimited(dev, "block %d: RX Underflow detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_RXOVR)
++		dev_err_ratelimited(dev, "block %d: RX Overflow detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXUDR)
++		dev_err_ratelimited(dev, "block %d: TX Underflow detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_TXOVR)
++		dev_err_ratelimited(dev, "block %d: TX Overflow detected\n", block);
++
++	if (pending & MCHP_ASRC_IR_LOCK) {
++		dev_dbg_ratelimited(dev, "block %d: DPLL locked detected\n", block);
++		/* Disable DPLL LOCK interrupt  */
++		regmap_update_bits(priv->regmap, MCHP_ASRC_IDR(block),
++				   MCHP_ASRC_IR_LOCK, MCHP_ASRC_IR_LOCK);
++
++		if (!priv->dsp[block].dma) {
++			dev_err_ratelimited(dev, "block %d: DSP locked but no PCM assigned\n",
++					    block);
++			return;
++		}
++
++		if (!priv->dsp[block].dma->unlocked_dsps)
++			return;
++		priv->dsp[block].dma->unlocked_dsps--;
++
++		/* DPLLs locked, start DMA transfers */
++		if (!priv->dsp[block].dma->unlocked_dsps) {
++			dev_dbg_ratelimited(dev, "block %d: DSPs ready, calling DMA handle\n",
++					    block);
++			tasklet_schedule(&priv->dsp[block].dma->start_handle);
++		} else {
++			dev_dbg_ratelimited(dev, "block %d: waiting for %d more DSPs to lock\n",
++					    block, priv->dsp[block].dma->unlocked_dsps);
++		}
++	}
++}
++
++static void mchp_asrc_block_interrupts(struct mchp_asrc_dev *priv, int block,
++				       irqreturn_t *ret)
++{
++	u32 isr, imr, pending;
++
++	regmap_read(priv->regmap, MCHP_ASRC_ISR(block), &isr);
++	regmap_read(priv->regmap, MCHP_ASRC_IMR(block), &imr);
++	dev_dbg_ratelimited(priv->dev, "IRQ handler: IMR %#x ISR %#x\n", imr, isr);
++
++	pending = isr & imr;
++	if (!pending)
++		return;
++
++	if (pending & MCHP_ASRC_IR_SECE) {
++		dev_err_ratelimited(priv->dev, "block %d: Security/Safety Event detected\n", block);
++		*ret = IRQ_HANDLED;
++	}
++
++	mchp_asrc_block_pending_intr(priv, pending, block);
++	*ret = IRQ_HANDLED;
++}
++
++static irqreturn_t mchp_asrc_interrupt(int irq, void *dev_id)
++{
++	struct mchp_asrc_dev *priv = dev_id;
++	irqreturn_t ret = IRQ_NONE;
++	int block;
++
++	for (block = 0; block < MCHP_ASRC_NB_STEREO_CH; block++)
++		mchp_asrc_block_interrupts(priv, block, &ret);
++
++	return ret;
++}
++
++static int mchp_asrc_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	struct mchp_asrc_dev *priv;
++	struct regmap *regmap;
++	void __iomem *base;
++	struct property *prop;
++	const __be32 *cur;
++	u32 pv;
++	u32 version;
++	int irq;
++	int err;
++	int count;
++	int i;
++
++	/* Get memory for driver data */
++	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
++	if (!priv)
++		return -ENOMEM;
++
++	/* Map I/O registers */
++	base = devm_platform_get_and_ioremap_resource(pdev, 0, &priv->mem);
++	if (IS_ERR(base))
++		return PTR_ERR(base);
++
++	regmap = devm_regmap_init_mmio(&pdev->dev, base, &mchp_asrc_regmap_config);
++	if (IS_ERR(regmap)) {
++		dev_err(&pdev->dev, "failed to init regmap: %ld\n", PTR_ERR(regmap));
++		return PTR_ERR(regmap);
++	}
++	priv->dev = &pdev->dev;
++	priv->regmap = regmap;
++
++	/* Request IRQ */
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0) {
++		dev_err(&pdev->dev, "failed to get IRQ no: %d\n", irq);
++		return irq;
++	}
++
++	err = devm_request_irq(&pdev->dev, irq, mchp_asrc_interrupt, 0, dev_name(&pdev->dev), priv);
++	if (err) {
++		dev_err(&pdev->dev, "failed to claim IRQ %d: %d\n", irq, err);
++		return err;
++	}
++
++	priv->pclk = devm_clk_get(&pdev->dev, "pclk");
++	if (IS_ERR(priv->pclk)) {
++		dev_err(&pdev->dev, "failed to get pclk clock: %ld\n", PTR_ERR(priv->pclk));
++		return PTR_ERR(priv->pclk);
++	}
++
++	priv->gclk = devm_clk_get(&pdev->dev, "gclk");
++	if (IS_ERR(priv->gclk)) {
++		dev_err(&pdev->dev, "failed to get gclk clock: %ld\n", PTR_ERR(priv->gclk));
++		return PTR_ERR(priv->gclk);
++	}
++
++	/* get the triggers list */
++	priv->trig_count = of_count_phandle_with_args(np, "microchip,triggers", NULL);
++	if (priv->trig_count < 0) {
++		dev_err(&pdev->dev, "failed to get microchip,triggers: %d\n",
++			priv->trig_count);
++		return priv->trig_count;
++	}
++	if (priv->trig_count == 0) {
++		dev_err(&pdev->dev, "no triggers found\n");
++		return -EINVAL;
++	}
++	dev_dbg(&pdev->dev, "found %d triggers:\n", priv->trig_count);
++	priv->trig = devm_kcalloc(&pdev->dev, priv->trig_count, sizeof(*priv->trig), GFP_KERNEL);
++	if (!priv->trig)
++		return -ENOMEM;
++
++	for (i = 0; i < priv->trig_count; i++) {
++		struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++
++		trig_be->phandle = devm_kzalloc(&pdev->dev, sizeof(*trig_be->phandle), GFP_KERNEL);
++		if (!trig_be->phandle) {
++			err = -ENOMEM;
++			goto __cleanup_of_phandle_triggers;
++		}
++		err = of_parse_phandle_with_fixed_args(np, "microchip,triggers",
++						       0, i, trig_be->phandle);
++		if (err < 0) {
++			dev_err(&pdev->dev, "failed to get phandle for trigger %d: %d\n", i, err);
++			devm_kfree(&pdev->dev, trig_be->phandle);
++			trig_be->phandle = NULL;
++			continue;
++		}
++	}
++	count = 0;
++	of_property_for_each_u32(np, "microchip,trigger-indexes", prop, cur, pv) {
++		struct mchp_asrc_be_trigger *trig_be = &priv->trig[count];
++
++		if (pv >= MCHP_ASRC_TRIG_IDX_MAX_VAL) {
++			dev_err(&pdev->dev,
++				"error: microchip,trigger-indexes too big: %d\n",
++				pv);
++			err = -EINVAL;
++			goto __cleanup_of_phandle_triggers;
++		}
++
++		/* skip not found phandle */
++		if (!trig_be->phandle)
++			continue;
++
++		trig_be->idx = pv;
++		trig_be->priv = priv;
++		count++;
++		if (count > priv->trig_count) {
++			dev_err(&pdev->dev,
++				"Too many microchip,trigger-indexes: %d\n", count);
++			err = -EINVAL;
++			goto __cleanup_of_phandle_triggers;
++		}
++	}
++
++#ifdef DEBUG
++	dev_dbg(&pdev->dev, "Triggers %d:\n", count);
++	for (i = 0; i < count; i++) {
++		dev_dbg(&pdev->dev, "%s, index %d\n", priv->trig[i].phandle->np->full_name,
++			priv->trig[i].idx);
++	}
++#endif
++	priv->thr_opmode = -1;
++	priv->rhr_opmode = -1;
++
++	platform_set_drvdata(pdev, priv);
++
++	err = devm_snd_soc_register_component(&pdev->dev, &mchp_asrc_component, mchp_asrc_dai,
++					      ARRAY_SIZE(mchp_asrc_dai));
++	if (err) {
++		dev_err(&pdev->dev, "failed to register ASoC DAI: %d\n", err);
++		clk_disable_unprepare(priv->pclk);
++		goto __cleanup_of_phandle_triggers;
++	}
++
++	err = mchp_asrc_pcm_register(&pdev->dev);
++	if (err) {
++		dev_err(&pdev->dev, "failed to register ASoC platform\n");
++		goto __cleanup_of_phandle_triggers;
++	}
++
++	/* Enable the peripheral clock */
++	err = clk_prepare_enable(priv->pclk);
++	if (err) {
++		dev_err(&pdev->dev, "failed to enable the peripheral clock: %d\n", err);
++		goto __cleanup_of_phandle_triggers;
++	}
++
++	/* Software reset for all registers */
++	regmap_write(priv->regmap, MCHP_ASRC_CR, MCHP_ASRC_CR_SWRST);
++
++	/* Get IP version. */
++	regmap_read(priv->regmap, MCHP_ASRC_VERSION, &version);
++
++	dev_info(priv->dev, "hw version: %#lx\n", version & MCHP_ASRC_VERSION_MASK);
++
++	return 0;
++
++__cleanup_of_phandle_triggers:
++	for (i = 0; i < priv->trig_count; i++) {
++		struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++
++		if (trig_be->phandle)
++			of_node_put(trig_be->phandle->np);
++	}
++	return err;
++}
++
++static int mchp_asrc_remove(struct platform_device *pdev)
++{
++	struct mchp_asrc_dev *priv = platform_get_drvdata(pdev);
++	int i;
++
++	for (i = 0; i < priv->trig_count; i++) {
++		struct mchp_asrc_be_trigger *trig_be = &priv->trig[i];
++
++		if (trig_be->phandle)
++			of_node_put(trig_be->phandle->np);
++	}
++	clk_disable_unprepare(priv->pclk);
++
++	return 0;
++}
++
++static const struct of_device_id mchp_asrc_dt_ids[] = {
++	{
++		.compatible = "microchip,sama7g5-asrc",
++	},
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, mchp_asrc_dt_ids);
++
++static struct platform_driver mchp_asrc_driver = {
++	.driver		= {
++		.name	= "mchp_asrc",
++		.of_match_table	= of_match_ptr(mchp_asrc_dt_ids),
++	},
++	.probe		= mchp_asrc_probe,
++	.remove		= mchp_asrc_remove,
++};
++module_platform_driver(mchp_asrc_driver);
++
++MODULE_DESCRIPTION("Microchip Asynchronous Sample Rate Converter (ASRC) driver");
++MODULE_AUTHOR("Codrin Ciubotariu <codrin.ciubotariu@microchip.com>");
++MODULE_LICENSE("GPL v2");
+--- /dev/null
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-asrc.h	2024-12-04 16:41:41.478993400 +0900
+@@ -0,0 +1,32 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++// ASoC Platform header file for Microchip ASRC
++//
++// Copyright (C) 2018 Microchip Technology Inc. and its subsidiaries
++//
++// Author: Codrin Ciubotariu <codrin.ciubotariu@microchip.com>
++
++#ifndef __MCHP_ASRC_H
++#define __MCHP_ASRC_H
++
++#include <sound/soc.h>
++#include <sound/dmaengine_pcm.h>
++
++#define MCHP_ASRC_NB_CHANNELS		8
++#define MCHP_ASRC_NB_STEREO_CH		((MCHP_ASRC_NB_CHANNELS) / 2)
++
++struct mchp_asrc_dmaengine_be_dma {
++	struct of_phandle_args *phandle;
++	struct snd_dmaengine_dai_dma_data dma_data;
++	struct list_head list;
++};
++
++struct mchp_asrc_dmaengine_dai_dma {
++	struct list_head dma_in_list;
++	struct list_head dma_out_list;
++	struct tasklet_struct start_handle;
++	int unlocked_dsps;
++};
++
++int mchp_asrc_pcm_register(struct device *dev);
++
++#endif	/* __MCHP_ASRC_H */
+--- linux-6.6.51/sound/soc/atmel/mchp-i2s-mcc.c	2024-12-05 13:08:00.873900200 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-i2s-mcc.c	2024-12-04 16:41:41.479990600 +0900
+@@ -504,12 +504,27 @@
+ 	return !!(sr & (MCHP_I2SMCC_SR_TXEN | MCHP_I2SMCC_SR_RXEN));
+ }
+ 
++static inline int mchp_i2s_mcc_period_to_maxburst(int period_size, int sample_size)
++{
++	if (!(period_size % (sample_size * 8)))
++		return 8;
++	if (!(period_size % (sample_size * 4)))
++		return 4;
++	if (!(period_size % (sample_size * 2)))
++		return 2;
++	return 1;
++}
++
+ static int mchp_i2s_mcc_hw_params(struct snd_pcm_substream *substream,
+ 				  struct snd_pcm_hw_params *params,
+ 				  struct snd_soc_dai *dai)
+ {
+ 	unsigned long rate = 0;
+ 	struct mchp_i2s_mcc_dev *dev = snd_soc_dai_get_drvdata(dai);
++	int sample_bytes = params_physical_width(params) / 8;
++	int period_bytes = params_period_size(params) *
++		params_channels(params) * sample_bytes;
++	int maxburst;
+ 	u32 mra = 0;
+ 	u32 mrb = 0;
+ 	unsigned int channels = params_channels(params);
+@@ -519,9 +534,9 @@
+ 	int ret;
+ 	bool is_playback = (substream->stream == SNDRV_PCM_STREAM_PLAYBACK);
+ 
+-	dev_dbg(dev->dev, "%s() rate=%u format=%#x width=%u channels=%u\n",
++	dev_dbg(dev->dev, "%s() rate=%u format=%#x width=%u channels=%u period_bytes=%d\n",
+ 		__func__, params_rate(params), params_format(params),
+-		params_width(params), params_channels(params));
++		params_width(params), params_channels(params), period_bytes);
+ 
+ 	switch (dev->fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
+ 	case SND_SOC_DAIFMT_I2S:
+@@ -630,11 +645,12 @@
+ 	 * We must have the same burst size configured
+ 	 * in the DMA transfer and in out IP
+ 	 */
+-	mrb |= MCHP_I2SMCC_MRB_DMACHUNK(channels);
++	maxburst = mchp_i2s_mcc_period_to_maxburst(period_bytes, sample_bytes);
++	mrb |= MCHP_I2SMCC_MRB_DMACHUNK(maxburst);
+ 	if (is_playback)
+-		dev->playback.maxburst = 1 << (fls(channels) - 1);
++		dev->playback.maxburst = maxburst;
+ 	else
+-		dev->capture.maxburst = 1 << (fls(channels) - 1);
++		dev->capture.maxburst = maxburst;
+ 
+ 	switch (params_format(params)) {
+ 	case SNDRV_PCM_FORMAT_S8:
+@@ -908,14 +924,14 @@
+ 
+ static struct snd_soc_dai_driver mchp_i2s_mcc_dai = {
+ 	.playback = {
+-		.stream_name = "I2SMCC-Playback",
++		.stream_name = "Playback",
+ 		.channels_min = 1,
+ 		.channels_max = 8,
+ 		.rates = MCHP_I2SMCC_RATES,
+ 		.formats = MCHP_I2SMCC_FORMATS,
+ 	},
+ 	.capture = {
+-		.stream_name = "I2SMCC-Capture",
++		.stream_name = "Capture",
+ 		.channels_min = 1,
+ 		.channels_max = 8,
+ 		.rates = MCHP_I2SMCC_RATES,
+--- linux-6.6.51/sound/soc/atmel/mchp-pdmc.c	2024-12-05 13:08:00.874897400 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-pdmc.c	2024-12-04 16:41:41.479990600 +0900
+@@ -14,6 +14,7 @@
+ #include <linux/of.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regmap.h>
++#include <linux/spinlock.h>
+ 
+ #include <sound/core.h>
+ #include <sound/dmaengine_pcm.h>
+@@ -104,6 +105,7 @@
+ 
+ struct mchp_pdmc {
+ 	struct mic_map channel_mic_map[MCHP_PDMC_MAX_CHANNELS];
++	spinlock_t busy_lock;		/* lock protecting busy */
+ 	struct device *dev;
+ 	struct snd_dmaengine_dai_dma_data addr;
+ 	struct regmap *regmap;
+@@ -115,6 +117,8 @@
+ 	int mic_no;
+ 	int sinc_order;
+ 	bool audio_filter_en;
++	u8 gclk_enabled:1;
++	u8 busy:1;
+ };
+ 
+ static const char *const mchp_pdmc_sinc_filter_order_text[] = {
+@@ -158,10 +162,19 @@
+ 		return -EINVAL;
+ 
+ 	val = snd_soc_enum_item_to_val(e, item[0]) << e->shift_l;
+-	if (val == dd->sinc_order)
++
++	spin_lock(&dd->busy_lock);
++	if (dd->busy) {
++		spin_unlock((&dd->busy_lock));
++		return -EBUSY;
++	}
++	if (val == dd->sinc_order) {
++		spin_unlock((&dd->busy_lock));
+ 		return 0;
++	}
+ 
+ 	dd->sinc_order = val;
++	spin_unlock((&dd->busy_lock));
+ 
+ 	return 1;
+ }
+@@ -184,10 +197,18 @@
+ 	struct mchp_pdmc *dd = snd_soc_component_get_drvdata(component);
+ 	bool af = uvalue->value.integer.value[0] ? true : false;
+ 
+-	if (dd->audio_filter_en == af)
++	spin_lock(&dd->busy_lock);
++	if (dd->busy) {
++		spin_unlock((&dd->busy_lock));
++		return -EBUSY;
++	}
++	if (dd->audio_filter_en == af) {
++		spin_unlock((&dd->busy_lock));
+ 		return 0;
++	}
+ 
+ 	dd->audio_filter_en = af;
++	spin_unlock((&dd->busy_lock));
+ 
+ 	return 1;
+ }
+@@ -285,6 +306,9 @@
+ 	if (!substream)
+ 		return -ENODEV;
+ 
++	if (!substream->runtime)
++		return 0; /* just for avoiding error from alsactl restore */
++
+ 	map = mchp_pdmc_chmap_get(substream, info);
+ 	if (!map)
+ 		return -EINVAL;
+@@ -370,52 +394,10 @@
+ 	},
+ };
+ 
+-static int mchp_pdmc_close(struct snd_soc_component *component,
+-			   struct snd_pcm_substream *substream)
+-{
+-	return snd_soc_add_component_controls(component, mchp_pdmc_snd_controls,
+-					      ARRAY_SIZE(mchp_pdmc_snd_controls));
+-}
+-
+-static int mchp_pdmc_open(struct snd_soc_component *component,
+-			  struct snd_pcm_substream *substream)
+-{
+-	int i;
+-
+-	/* remove controls that can't be changed at runtime */
+-	for (i = 0; i < ARRAY_SIZE(mchp_pdmc_snd_controls); i++) {
+-		const struct snd_kcontrol_new *control = &mchp_pdmc_snd_controls[i];
+-		struct snd_ctl_elem_id id;
+-		int err;
+-
+-		if (component->name_prefix)
+-			snprintf(id.name, sizeof(id.name), "%s %s", component->name_prefix,
+-				 control->name);
+-		else
+-			strscpy(id.name, control->name, sizeof(id.name));
+-
+-		id.numid = 0;
+-		id.iface = control->iface;
+-		id.device = control->device;
+-		id.subdevice = control->subdevice;
+-		id.index = control->index;
+-		err = snd_ctl_remove_id(component->card->snd_card, &id);
+-		if (err < 0)
+-			dev_err(component->dev, "%d: Failed to remove %s\n", err,
+-				control->name);
+-	}
+-
+-	return 0;
+-}
+-
+ static const struct snd_soc_component_driver mchp_pdmc_dai_component = {
+ 	.name = "mchp-pdmc",
+ 	.controls = mchp_pdmc_snd_controls,
+ 	.num_controls = ARRAY_SIZE(mchp_pdmc_snd_controls),
+-	.open = &mchp_pdmc_open,
+-	.close = &mchp_pdmc_close,
+-	.legacy_dai_naming = 1,
+-	.trigger_start = SND_SOC_TRIGGER_ORDER_LDC,
+ };
+ 
+ static const unsigned int mchp_pdmc_1mic[] = {1};
+@@ -511,13 +493,13 @@
+ 	return 0;
+ }
+ 
+-static inline int mchp_pdmc_period_to_maxburst(int period_size)
++static inline int mchp_pdmc_period_to_maxburst(int period_size, int sample_size)
+ {
+-	if (!(period_size % 8))
++	if (!(period_size % (sample_size * 8)))
+ 		return 8;
+-	if (!(period_size % 4))
++	if (!(period_size % (sample_size * 4)))
+ 		return 4;
+-	if (!(period_size % 2))
++	if (!(period_size % (sample_size * 2)))
+ 		return 2;
+ 	return 1;
+ }
+@@ -547,14 +529,18 @@
+ 	unsigned int channels = params_channels(params);
+ 	unsigned int osr = 0, osr_start;
+ 	unsigned int fs = params_rate(params);
++	int sample_bytes = params_physical_width(params) / 8;
++	int period_bytes = params_period_size(params) *
++		params_channels(params) * sample_bytes;
++	int maxburst;
+ 	u32 mr_val = 0;
+ 	u32 cfgr_val = 0;
+ 	int i;
+ 	int ret;
+ 
+-	dev_dbg(comp->dev, "%s() rate=%u format=%#x width=%u channels=%u\n",
++	dev_dbg(comp->dev, "%s() rate=%u format=%#x width=%u channels=%u period_bytes=%d\n",
+ 		__func__, params_rate(params), params_format(params),
+-		params_width(params), params_channels(params));
++		params_width(params), params_channels(params), period_bytes);
+ 
+ 	if (channels > dd->mic_no) {
+ 		dev_err(comp->dev, "more channels %u than microphones %d\n",
+@@ -571,6 +557,18 @@
+ 			cfgr_val |= MCHP_PDMC_CFGR_BSSEL(i);
+ 	}
+ 
++	if (dd->gclk_enabled) {
++		clk_disable_unprepare(dd->gclk);
++		dd->gclk_enabled = 0;
++	}
++
++	/*
++	 * from these point forward, we consider the controller busy, so the
++	 * audio filter and SINC order can't be changed
++	 */
++	spin_lock(&dd->busy_lock);
++	dd->busy = 1;
++	spin_unlock((&dd->busy_lock));
+ 	for (osr_start = dd->audio_filter_en ? 64 : 8;
+ 	     osr_start <= 256 && best_diff_rate; osr_start *= 2) {
+ 		long round_rate;
+@@ -608,7 +606,8 @@
+ 
+ 	mr_val |= FIELD_PREP(MCHP_PDMC_MR_SINCORDER_MASK, dd->sinc_order);
+ 
+-	dd->addr.maxburst = mchp_pdmc_period_to_maxburst(snd_pcm_lib_period_bytes(substream));
++	maxburst = mchp_pdmc_period_to_maxburst(period_bytes, sample_bytes);
++	dd->addr.maxburst = maxburst;
+ 	mr_val |= FIELD_PREP(MCHP_PDMC_MR_CHUNK_MASK, dd->addr.maxburst);
+ 	dev_dbg(comp->dev, "maxburst set to %d\n", dd->addr.maxburst);
+ 
+@@ -623,6 +622,18 @@
+ 	return 0;
+ }
+ 
++static int mchp_pdmc_hw_free(struct snd_pcm_substream *substream,
++			     struct snd_soc_dai *dai)
++{
++	struct mchp_pdmc *dd = snd_soc_dai_get_drvdata(dai);
++
++	spin_lock(&dd->busy_lock);
++	dd->busy = 0;
++	spin_unlock((&dd->busy_lock));
++
++	return 0;
++}
++
+ static void mchp_pdmc_noise_filter_workaround(struct mchp_pdmc *dd)
+ {
+ 	u32 tmp, steps = 16;
+@@ -755,11 +766,13 @@
+ 	.set_fmt	= mchp_pdmc_set_fmt,
+ 	.startup	= mchp_pdmc_startup,
+ 	.hw_params	= mchp_pdmc_hw_params,
++	.hw_free	= mchp_pdmc_hw_free,
+ 	.trigger	= mchp_pdmc_trigger,
+ 	.pcm_new	= &mchp_pdmc_pcm_new,
+ };
+ 
+ static struct snd_soc_dai_driver mchp_pdmc_dai = {
++	.name	= "mchp-pdmc",
+ 	.capture = {
+ 		.stream_name	= "Capture",
+ 		.channels_min	= 1,
+@@ -1081,6 +1094,7 @@
+ 	 */
+ 	dd->audio_filter_en = true;
+ 	dd->sinc_order = 3;
++	spin_lock_init(&dd->busy_lock);
+ 
+ 	dd->addr.addr = (dma_addr_t)res->start + MCHP_PDMC_RHR;
+ 	platform_set_drvdata(pdev, dd);
+--- linux-6.6.51/sound/soc/atmel/mchp-spdifrx.c	2024-12-05 13:08:00.874897400 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-spdifrx.c	2024-12-04 16:41:41.480988000 +0900
+@@ -1014,7 +1014,7 @@
+ static struct snd_soc_dai_driver mchp_spdifrx_dai = {
+ 	.name = "mchp-spdifrx",
+ 	.capture = {
+-		.stream_name = "S/PDIF Capture",
++		.stream_name = "Capture",
+ 		.channels_min = SPDIFRX_CHANNELS,
+ 		.channels_max = SPDIFRX_CHANNELS,
+ 		.rates = MCHP_SPDIF_RATES,
+--- linux-6.6.51/sound/soc/atmel/mchp-spdiftx.c	2024-12-05 13:08:00.874897400 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/atmel/mchp-spdiftx.c	2024-12-04 16:41:41.480988000 +0900
+@@ -707,7 +707,7 @@
+ static struct snd_soc_dai_driver mchp_spdiftx_dai = {
+ 	.name = "mchp-spdiftx",
+ 	.playback = {
+-		.stream_name = "S/PDIF Playback",
++		.stream_name = "Playback",
+ 		.channels_min = 1,
+ 		.channels_max = 2,
+ 		.rates = MCHP_SPDIFTX_RATES,
+--- linux-6.6.51/sound/soc/soc-dapm.c	2024-12-05 13:08:01.475291500 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/soc-dapm.c	2024-12-04 16:41:42.008576700 +0900
+@@ -4032,6 +4032,108 @@
+ 	return ret;
+ }
+ 
++static int
++snd_soc_dai_link_loopback_event_pre_pmu(struct snd_soc_dapm_widget *w,
++					struct snd_pcm_substream *substream)
++{
++	struct snd_soc_dapm_path *path;
++	struct snd_soc_dai *source, *sink;
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
++	int ret = 0;
++
++	rtd->dpcm[SNDRV_PCM_STREAM_PLAYBACK].state = SND_SOC_DPCM_STATE_START;
++	rtd->dpcm[SNDRV_PCM_STREAM_CAPTURE].state = SND_SOC_DPCM_STATE_START;
++
++	substream->stream = SNDRV_PCM_STREAM_CAPTURE;
++	snd_soc_dapm_widget_for_each_source_path(w, path) {
++		source = path->source->priv;
++		snd_soc_dai_activate(source, substream->stream);
++	}
++
++	substream->stream = SNDRV_PCM_STREAM_PLAYBACK;
++	snd_soc_dapm_widget_for_each_sink_path(w, path) {
++		sink = path->sink->priv;
++		snd_soc_dai_activate(sink, substream->stream);
++	}
++
++	return ret;
++}
++
++static int snd_soc_dai_link_loopback_event(struct snd_soc_dapm_widget *w,
++					   struct snd_kcontrol *kcontrol, int event)
++{
++	struct snd_soc_dapm_path *path;
++	struct snd_soc_dai *source, *sink;
++	struct snd_pcm_substream *substream = w->priv;
++	int ret = 0, saved_stream = substream->stream;
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
++
++	if (WARN_ON(list_empty(&w->edges[SND_SOC_DAPM_DIR_OUT]) ||
++		    list_empty(&w->edges[SND_SOC_DAPM_DIR_IN])))
++		return -EINVAL;
++
++	switch (event) {
++	case SND_SOC_DAPM_PRE_PMU:
++		ret = snd_soc_dai_link_loopback_event_pre_pmu(w, substream);
++		if (ret < 0)
++			goto out;
++
++		break;
++
++	case SND_SOC_DAPM_POST_PMU:
++		snd_soc_dapm_widget_for_each_sink_path(w, path) {
++			sink = path->sink->priv;
++
++			ret = snd_soc_dai_digital_mute(sink, 0,
++						       SNDRV_PCM_STREAM_PLAYBACK);
++			if (ret != 0 && ret != -ENOTSUPP)
++				dev_warn(sink->dev,
++					 "ASoC: Failed to unmute: %d\n", ret);
++			ret = 0;
++		}
++		break;
++
++	case SND_SOC_DAPM_PRE_PMD:
++		snd_soc_dapm_widget_for_each_sink_path(w, path) {
++			sink = path->sink->priv;
++
++			ret = snd_soc_dai_digital_mute(sink, 1,
++						       SNDRV_PCM_STREAM_PLAYBACK);
++			if (ret != 0 && ret != -ENOTSUPP)
++				dev_warn(sink->dev,
++					 "ASoC: Failed to mute: %d\n", ret);
++			ret = 0;
++		}
++
++		substream->stream = SNDRV_PCM_STREAM_CAPTURE;
++		snd_soc_dapm_widget_for_each_source_path(w, path) {
++			source = path->source->priv;
++			snd_soc_dai_deactivate(source, substream->stream);
++		}
++
++		substream->stream = SNDRV_PCM_STREAM_PLAYBACK;
++		snd_soc_dapm_widget_for_each_sink_path(w, path) {
++			sink = path->sink->priv;
++			snd_soc_dai_deactivate(sink, substream->stream);
++		}
++		break;
++
++	case SND_SOC_DAPM_POST_PMD:
++		rtd->dpcm[SNDRV_PCM_STREAM_PLAYBACK].state = SND_SOC_DPCM_STATE_CLOSE;
++		rtd->dpcm[SNDRV_PCM_STREAM_CAPTURE].state = SND_SOC_DPCM_STATE_CLOSE;
++		break;
++
++	default:
++		WARN(1, "Unknown event %d\n", event);
++		ret = -EINVAL;
++	}
++
++out:
++	/* Restore the substream direction */
++	substream->stream = saved_stream;
++	return ret;
++}
++
+ static int snd_soc_dapm_dai_link_get(struct snd_kcontrol *kcontrol,
+ 			  struct snd_ctl_elem_value *ucontrol)
+ {
+@@ -4151,6 +4253,47 @@
+ }
+ 
+ static struct snd_soc_dapm_widget *
++snd_soc_dapm_new_loopback_dai(struct snd_soc_card *card, struct snd_pcm_substream *substream,
++			      char *id)
++{
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
++	struct snd_soc_dapm_widget template;
++	struct snd_soc_dapm_widget *w;
++	char *link_name;
++	int ret;
++
++	link_name = devm_kasprintf(card->dev, GFP_KERNEL, "%s-%s",
++				   rtd->dai_link->name, id);
++	if (!link_name)
++		return ERR_PTR(-ENOMEM);
++
++	memset(&template, 0, sizeof(template));
++	template.reg = SND_SOC_NOPM;
++	template.id = snd_soc_dapm_dai_link;
++	template.name = link_name;
++	template.event = snd_soc_dai_link_loopback_event;
++	template.event_flags = SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMU |
++		SND_SOC_DAPM_PRE_PMD | SND_SOC_DAPM_POST_PMD;
++	template.kcontrol_news = NULL;
++
++	w = snd_soc_dapm_new_control_unlocked(&card->dapm, &template);
++	if (IS_ERR(w)) {
++		ret = PTR_ERR(w);
++		dev_err(rtd->dev, "ASoC: Failed to create %s widget: %d\n",
++			link_name, ret);
++		goto outfree_link_name;
++	}
++
++	w->priv = substream;
++
++	return w;
++
++outfree_link_name:
++	devm_kfree(card->dev, link_name);
++	return ERR_PTR(ret);
++}
++
++static struct snd_soc_dapm_widget *
+ snd_soc_dapm_new_dai(struct snd_soc_card *card,
+ 		     struct snd_pcm_substream *substream,
+ 		     char *id)
+@@ -4365,8 +4508,35 @@
+ 	struct snd_soc_dapm_widget **src[]	= { &cpu,	&codec };
+ 	struct snd_soc_dapm_widget **sink[]	= { &codec,	&cpu };
+ 	char *widget_name[]			= { "playback",	"capture" };
++	struct snd_pcm_str *streams = rtd->pcm->streams;
+ 	int stream;
+ 
++	if (dai_link->c2c_params || (rtd->dai_link->dynamic && rtd->dai_link->dpcm_loopback)) {
++		struct snd_soc_dapm_widget *dai = NULL;
++
++		/*Playback CPU to Capture Widget*/
++		cpu	= snd_soc_dai_get_widget(cpu_dai,	SNDRV_PCM_STREAM_CAPTURE);
++		/*Capture CPU to Playback Widget*/
++		codec	= snd_soc_dai_get_widget(cpu_dai,	SNDRV_PCM_STREAM_PLAYBACK);
++
++		if (!rtd->c2c_widget[SNDRV_PCM_STREAM_PLAYBACK] &&
++		    !rtd->c2c_widget[SNDRV_PCM_STREAM_CAPTURE]) {
++			struct snd_pcm_substream *substream;
++
++			streams[SNDRV_PCM_STREAM_PLAYBACK].substream->private_data = rtd;
++			streams[SNDRV_PCM_STREAM_CAPTURE].substream->private_data = rtd;
++			substream = streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
++			dai = snd_soc_dapm_new_loopback_dai(card, substream, "hostless");
++			if (IS_ERR(dai))
++				return;
++			rtd->c2c_widget[SNDRV_PCM_STREAM_PLAYBACK] = dai;
++			rtd->c2c_widget[SNDRV_PCM_STREAM_CAPTURE] = dai;
++		}
++		dapm_connect_dai_routes(&card->dapm, cpu_dai, cpu,
++					dai, cpu_dai, codec);
++		return;
++	}
++
+ 	for_each_pcm_streams(stream) {
+ 		int stream_cpu, stream_codec;
+ 
+@@ -4448,13 +4618,19 @@
+ 		 * dynamic FE links have no fixed DAI mapping.
+ 		 * CODEC<->CODEC links have no direct connection.
+ 		 */
+-		if (rtd->dai_link->dynamic)
++		if (rtd->dai_link->dynamic && !rtd->dai_link->dpcm_loopback)
+ 			continue;
+ 
+ 		if (rtd->dai_link->num_cpus == 1) {
+-			for_each_rtd_codec_dais(rtd, i, codec_dai)
+-				dapm_connect_dai_pair(card, rtd, codec_dai,
++			/* connect FE to FE */
++			if (rtd->dai_link->dynamic && rtd->dai_link->dpcm_loopback) {
++				dapm_connect_dai_pair(card, rtd, asoc_rtd_to_cpu(rtd, 0),
+ 						      asoc_rtd_to_cpu(rtd, 0));
++			} else {
++				for_each_rtd_codec_dais(rtd, i, codec_dai)
++					dapm_connect_dai_pair(card, rtd, codec_dai,
++							      asoc_rtd_to_cpu(rtd, 0));
++			}
+ 		} else if (rtd->dai_link->num_codecs == rtd->dai_link->num_cpus) {
+ 			for_each_rtd_codec_dais(rtd, i, codec_dai)
+ 				dapm_connect_dai_pair(card, rtd, codec_dai,
+--- linux-6.6.51/sound/soc/soc-generic-dmaengine-pcm.c	2024-12-05 13:08:01.476319500 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/soc-generic-dmaengine-pcm.c	2024-12-04 16:41:42.009574000 +0900
+@@ -91,7 +91,27 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	return dmaengine_slave_config(chan, &slave_config);
++	ret = dmaengine_slave_config(chan, &slave_config);
++	if (ret)
++		return ret;
++
++	if (!substream->managed_buffer_alloc) {
++		substream->dma_buffer.dev.type = SNDRV_DMA_TYPE_DEV_IRAM;
++		substream->dma_buffer.dev.dev = chan->device->dev;
++		return snd_pcm_lib_malloc_pages(substream,
++						params_buffer_bytes(params));
++	}
++
++	return 0;
++}
++
++static int dmaengine_pcm_hw_free(struct snd_soc_component *component,
++				 struct snd_pcm_substream *substream)
++{
++	if (!substream->managed_buffer_alloc)
++		return snd_pcm_lib_free_pages(substream);
++
++	return 0;
+ }
+ 
+ static int
+@@ -330,6 +350,7 @@
+ 	.open		= dmaengine_pcm_open,
+ 	.close		= dmaengine_pcm_close,
+ 	.hw_params	= dmaengine_pcm_hw_params,
++	.hw_free	= dmaengine_pcm_hw_free,
+ 	.trigger	= dmaengine_pcm_trigger,
+ 	.pointer	= dmaengine_pcm_pointer,
+ 	.pcm_construct	= dmaengine_pcm_new,
+@@ -342,6 +363,7 @@
+ 	.open		= dmaengine_pcm_open,
+ 	.close		= dmaengine_pcm_close,
+ 	.hw_params	= dmaengine_pcm_hw_params,
++	.hw_free	= dmaengine_pcm_hw_free,
+ 	.trigger	= dmaengine_pcm_trigger,
+ 	.pointer	= dmaengine_pcm_pointer,
+ 	.copy		= dmaengine_copy,
+--- linux-6.6.51/sound/soc/soc-pcm.c	2024-12-05 13:08:01.478283200 +0900
++++ linux4microchip-fpga-2024.09/sound/soc/soc-pcm.c	2024-12-04 16:41:42.010571200 +0900
+@@ -1001,9 +1001,11 @@
+ 
+ 	snd_soc_dpcm_mutex_assert_held(rtd);
+ 
+-	ret = soc_pcm_params_symmetry(substream, params);
+-	if (ret)
+-		goto out;
++	if (params) {
++		ret = soc_pcm_params_symmetry(substream, params);
++		if (ret)
++			goto out;
++	}
+ 
+ 	ret = snd_soc_link_hw_params(substream, params);
+ 	if (ret < 0)
+@@ -1029,6 +1031,13 @@
+ 		if (!snd_soc_dai_stream_valid(codec_dai, substream->stream))
+ 			continue;
+ 
++		if (!params) {
++			ret = snd_soc_dai_hw_params(codec_dai, substream, NULL);
++
++			if (ret < 0)
++				goto out;
++			continue;
++		}
+ 		/* copy params for each codec */
+ 		tmp_params = *params;
+ 
+@@ -1056,6 +1065,22 @@
+ 		if (!snd_soc_dai_stream_valid(cpu_dai, substream->stream))
+ 			continue;
+ 
++		/* spawn a branch to configure the hostless connction */
++		if (!params) {
++			ret = snd_soc_dai_hw_params(cpu_dai, substream, NULL);
++
++			if (ret < 0)
++				goto out;
++
++			/* set the pcm dai params to NULL for hostless conn */
++			soc_pcm_set_dai_params(cpu_dai, NULL);
++			/* make an update for soc dapm dai according with
++			 * NULL params for hostless connection
++			 */
++			snd_soc_dapm_update_dai(substream, &tmp_params, cpu_dai);
++			continue;
++		}
++
+ 		/* copy params for each cpu */
+ 		tmp_params = *params;
+ 
+@@ -1269,36 +1294,6 @@
+ 	return 1;
+ }
+ 
+-/* reparent a BE onto another FE */
+-static void dpcm_be_reparent(struct snd_soc_pcm_runtime *fe,
+-			struct snd_soc_pcm_runtime *be, int stream)
+-{
+-	struct snd_soc_dpcm *dpcm;
+-	struct snd_pcm_substream *fe_substream, *be_substream;
+-
+-	/* reparent if BE is connected to other FEs */
+-	if (!be->dpcm[stream].users)
+-		return;
+-
+-	be_substream = snd_soc_dpcm_get_substream(be, stream);
+-	if (!be_substream)
+-		return;
+-
+-	for_each_dpcm_fe(be, stream, dpcm) {
+-		if (dpcm->fe == fe)
+-			continue;
+-
+-		dev_dbg(fe->dev, "reparent %s path %s %s %s\n",
+-			stream ? "capture" : "playback",
+-			dpcm->fe->dai_link->name,
+-			stream ? "<-" : "->", dpcm->be->dai_link->name);
+-
+-		fe_substream = snd_soc_dpcm_get_substream(dpcm->fe, stream);
+-		be_substream->runtime = fe_substream->runtime;
+-		break;
+-	}
+-}
+-
+ /* disconnect a BE and FE */
+ void dpcm_be_disconnect(struct snd_soc_pcm_runtime *fe, int stream)
+ {
+@@ -1320,9 +1315,6 @@
+ 			stream ? "capture" : "playback", fe->dai_link->name,
+ 			stream ? "<-" : "->", dpcm->be->dai_link->name);
+ 
+-		/* BEs still alive need new FE */
+-		dpcm_be_reparent(fe, dpcm->be, stream);
+-
+ 		list_del(&dpcm->list_be);
+ 		list_move(&dpcm->list_fe, &deleted_dpcms);
+ 	}
+@@ -1466,8 +1458,9 @@
+ 
+ 	/* Destroy any old FE <--> BE connections */
+ 	for_each_dpcm_be(fe, stream, dpcm) {
+-		if (dpcm_be_is_active(dpcm, stream, *list_))
++		if (!fe->dai_link->dpcm_loopback && dpcm_be_is_active(dpcm, stream, *list_)) {
+ 			continue;
++		}
+ 
+ 		dev_dbg(fe->dev, "ASoC: pruning %s BE %s for %s\n",
+ 			stream ? "capture" : "playback",
+@@ -1492,7 +1485,7 @@
+ 	int i, new = 0, err;
+ 
+ 	/* don't connect if FE is not running */
+-	if (!fe_substream->runtime && !fe->fe_compr)
++	if (!fe->dai_link->dpcm_loopback && !fe_substream->runtime && !fe->fe_compr)
+ 		return new;
+ 
+ 	/* Create any new FE <--> BE connections */
+@@ -1524,7 +1517,8 @@
+ 		 * This helps to avoid unnecessary re-configuration of an
+ 		 * already active BE on such systems.
+ 		 */
+-		if (fe->card->component_chaining &&
++		if (!fe->dai_link->dpcm_loopback &&
++		    fe->card->component_chaining &&
+ 		    (be->dpcm[stream].state != SND_SOC_DPCM_STATE_NEW) &&
+ 		    (be->dpcm[stream].state != SND_SOC_DPCM_STATE_CLOSE))
+ 			continue;
+@@ -1607,14 +1601,17 @@
+ 		}
+ 
+ 		__soc_pcm_close(be, be_substream);
+-		be_substream->runtime = NULL;
++		if (be_substream->runtime) {
++			snd_pcm_runtime_free(be_substream->runtime);
++			be_substream->runtime = NULL;
++		}
++
+ 		be->dpcm[stream].state = SND_SOC_DPCM_STATE_CLOSE;
+ 	}
+ }
+ 
+ int dpcm_be_dai_startup(struct snd_soc_pcm_runtime *fe, int stream)
+ {
+-	struct snd_pcm_substream *fe_substream = snd_soc_dpcm_get_substream(fe, stream);
+ 	struct snd_soc_pcm_runtime *be;
+ 	struct snd_soc_dpcm *dpcm;
+ 	int err, count = 0;
+@@ -1622,6 +1619,8 @@
+ 	/* only startup BE DAIs that are either sinks or sources to this FE DAI */
+ 	for_each_dpcm_be(fe, stream, dpcm) {
+ 		struct snd_pcm_substream *be_substream;
++		struct snd_pcm_runtime *runtime;
++		struct snd_soc_pcm_stream *pcm_stream;
+ 
+ 		be = dpcm->be;
+ 		be_substream = snd_soc_dpcm_get_substream(be, stream);
+@@ -1654,7 +1653,14 @@
+ 		dev_dbg(be->dev, "ASoC: open %s BE %s\n",
+ 			stream ? "capture" : "playback", be->dai_link->name);
+ 
+-		be_substream->runtime = fe_substream->runtime;
++		runtime = snd_pcm_runtime_alloc();
++		if (!runtime) {
++			err = -ENOMEM;
++			goto unwind;
++		}
++
++		be_substream->runtime = runtime;
++
+ 		err = __soc_pcm_open(be, be_substream);
+ 		if (err < 0) {
+ 			be->dpcm[stream].users--;
+@@ -1666,7 +1672,32 @@
+ 			be->dpcm[stream].state = SND_SOC_DPCM_STATE_CLOSE;
+ 			goto unwind;
+ 		}
++
+ 		be->dpcm[stream].be_start = 0;
++
++		/* initialize the BE HW parameters */
++		soc_pcm_init_runtime_hw(be_substream);
++
++		/* initialize the BE constraints */
++		err = snd_pcm_hw_constraints_init(be_substream);
++		if (err < 0) {
++			dev_err(be->dev, "dpcm_be_hw_constraints_init failed\n");
++			goto unwind;
++		}
++
++		pcm_stream = snd_soc_dai_get_pcm_stream(asoc_rtd_to_cpu(be, 0),
++							stream);
++
++		soc_pcm_hw_update_rate(&runtime->hw, pcm_stream);
++		soc_pcm_hw_update_chan(&runtime->hw, pcm_stream);
++		soc_pcm_hw_update_format(&runtime->hw, pcm_stream);
++
++		err = snd_pcm_hw_constraints_complete(be_substream);
++		if (err < 0) {
++			dev_err(fe->dev, "snd_pcm_hw_constraints_complete failed\n");
++			goto unwind;
++		}
++
+ 		be->dpcm[stream].state = SND_SOC_DPCM_STATE_OPEN;
+ 		count++;
+ 	}
+@@ -2010,14 +2041,53 @@
+ 	return 0;
+ }
+ 
++static int dpcm_be_dai_hw_params_init(struct snd_soc_pcm_runtime *fe, int stream)
++{
++	struct snd_pcm_hw_params *params = &fe->dpcm[stream].hw_params;
++	int k;
++
++	for (k = SNDRV_PCM_HW_PARAM_FIRST_MASK;
++	     k <= SNDRV_PCM_HW_PARAM_LAST_MASK; k++)
++		snd_mask_any(hw_param_mask(params, k));
++
++	for (k = SNDRV_PCM_HW_PARAM_FIRST_INTERVAL;
++	     k <= SNDRV_PCM_HW_PARAM_LAST_INTERVAL; k++)
++		snd_interval_any(hw_param_interval(params, k));
++
++	if (fe->dai_link->dpcm_merged_format) {
++		memcpy(hw_param_interval(&fe->dpcm[stream].hw_params,
++					 SNDRV_PCM_HW_PARAM_FORMAT),
++		       hw_param_interval(params, SNDRV_PCM_HW_PARAM_FORMAT),
++		       sizeof(struct snd_interval));
++	}
++	if (fe->dai_link->dpcm_merged_chan) {
++		memcpy(hw_param_interval(&fe->dpcm[stream].hw_params,
++					 SNDRV_PCM_HW_PARAM_CHANNELS),
++		       hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS),
++		       sizeof(struct snd_interval));
++	}
++	if (fe->dai_link->dpcm_merged_rate) {
++		memcpy(hw_param_interval(&fe->dpcm[stream].hw_params,
++					 SNDRV_PCM_HW_PARAM_RATE),
++		       hw_param_interval(params, SNDRV_PCM_HW_PARAM_RATE),
++		       sizeof(struct snd_interval));
++	}
++
++	return 0;
++}
++
+ int dpcm_be_dai_hw_params(struct snd_soc_pcm_runtime *fe, int stream)
+ {
+ 	struct snd_soc_pcm_runtime *be;
+ 	struct snd_pcm_substream *be_substream;
+ 	struct snd_soc_dpcm *dpcm;
+ 	int ret;
++	int current_stream = stream;
+ 
+-	for_each_dpcm_be(fe, stream, dpcm) {
++	/* initialize the BE HW params */
++	dpcm_be_dai_hw_params_init(fe, stream);
++
++	for_each_dpcm_be(fe, current_stream, dpcm) {
+ 		struct snd_pcm_hw_params hw_params;
+ 
+ 		be = dpcm->be;
+@@ -2027,6 +2097,11 @@
+ 		if (!snd_soc_dpcm_be_can_update(fe, be, stream))
+ 			continue;
+ 
++		if (!be_substream) {
++			dev_err(be->dev, "ASoC: no backend %s stream\n",
++				stream ? "capture" : "playback");
++			continue;
++		}
+ 		/* copy params for each dpcm */
+ 		memcpy(&hw_params, &fe->dpcm[stream].hw_params,
+ 				sizeof(struct snd_pcm_hw_params));
+@@ -2036,6 +2111,14 @@
+ 		if (ret < 0)
+ 			goto unwind;
+ 
++		/* apply constrains */
++		hw_params.rmask = ~0U;
++		ret = snd_pcm_hw_refine(be_substream, &hw_params);
++		if (ret < 0) {
++			dev_err(fe->dev, "failed to refine hw parameters: %d\n", ret);
++			goto unwind;
++		}
++
+ 		/* copy the fixed-up hw params for BE dai */
+ 		memcpy(&be->dpcm[stream].hw_params, &hw_params,
+ 		       sizeof(struct snd_pcm_hw_params));
+@@ -2057,6 +2140,7 @@
+ 			goto unwind;
+ 
+ 		be->dpcm[stream].state = SND_SOC_DPCM_STATE_HW_PARAMS;
++		snd_pcm_runtime_set(be_substream, &be->dpcm[stream].hw_params);
+ 	}
+ 	return 0;
+ 
+@@ -2097,8 +2181,6 @@
+ 	snd_soc_dpcm_mutex_lock(fe);
+ 	dpcm_set_fe_update_state(fe, stream, SND_SOC_DPCM_UPDATE_FE);
+ 
+-	memcpy(&fe->dpcm[stream].hw_params, params,
+-			sizeof(struct snd_pcm_hw_params));
+ 	ret = dpcm_be_dai_hw_params(fe, stream);
+ 	if (ret < 0)
+ 		goto out;
+@@ -2508,23 +2590,56 @@
+ {
+ 	struct snd_pcm_substream *substream =
+ 		snd_soc_dpcm_get_substream(fe, stream);
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	enum snd_soc_dpcm_trigger trigger = fe->dai_link->trigger[stream];
+ 	int err;
+ 
+ 	dev_dbg(fe->dev, "ASoC: runtime %s close on FE %s\n",
+ 			stream ? "capture" : "playback", fe->dai_link->name);
+ 
+-	if (trigger == SND_SOC_DPCM_TRIGGER_BESPOKE) {
++	switch (trigger) {
++	case SND_SOC_DPCM_TRIGGER_BESPOKE:
+ 		/* call bespoke trigger - FE takes care of all BE triggers */
+ 		dev_dbg(fe->dev, "ASoC: bespoke trigger FE %s cmd stop\n",
+ 				fe->dai_link->name);
+ 
+ 		err = snd_soc_pcm_dai_bespoke_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
+-	} else {
+-		dev_dbg(fe->dev, "ASoC: trigger FE %s cmd stop\n",
++		if (err < 0)
++			dev_err(fe->dev, "ASoC: trigger FE failed %d\n", err);
++		break;
++	case SND_SOC_DPCM_TRIGGER_PRE:
++		dev_dbg(fe->dev, "ASoC: PRE trigger FE %s cmd stop\n",
+ 			fe->dai_link->name);
+ 
++		if (fe->dai_link->dpcm_loopback) {
++			err = soc_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
++			if (err < 0)
++				dev_err(fe->dev, "ASoC: trigger for FE failed %d\n", err);
++		}
+ 		err = dpcm_be_dai_trigger(fe, stream, SNDRV_PCM_TRIGGER_STOP);
++		if (err < 0)
++			dev_err(fe->dev, "ASoC: trigger FE failed %d\n", err);
++		break;
++	case SND_SOC_DPCM_TRIGGER_POST:
++		dev_dbg(fe->dev, "ASoC: POST trigger FE %s cmd stop\n",
++			fe->dai_link->name);
++
++		err = dpcm_be_dai_trigger(fe, stream, SNDRV_PCM_TRIGGER_STOP);
++		if (err < 0)
++			dev_err(fe->dev, "ASoC: trigger FE failed %d\n", err);
++
++		if (fe->dai_link->dpcm_loopback) {
++			err = soc_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
++			if (err < 0)
++				dev_err(fe->dev, "ASoC: trigger for FE failed %d\n", err);
++		}
++		break;
++	}
++
++	if (fe->dai_link->dpcm_loopback) {
++		err = __soc_pcm_hw_free(rtd, substream);
++		if (err < 0)
++			dev_err(fe->dev, "ASoC: hw_free for FE failed %d\n", err);
+ 	}
+ 
+ 	dpcm_be_dai_hw_free(fe, stream);
+@@ -2534,13 +2649,23 @@
+ 	/* run the stream event for each BE */
+ 	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_NOP);
+ 
+-	return soc_pcm_ret(fe, err);
++	if (err < 0)
++		dev_err(fe->dev, "ASoC: %s() failed (%d)\n", __func__, err);
++
++	if (fe->dai_link->dpcm_loopback) {
++		err = __soc_pcm_close(rtd, substream);
++		if (err < 0)
++			dev_err(fe->dev, "ASoC: shutdown FE failed %d\n", err);
++	}
++
++	return err;
+ }
+ 
+ static int dpcm_run_update_startup(struct snd_soc_pcm_runtime *fe, int stream)
+ {
+ 	struct snd_pcm_substream *substream =
+ 		snd_soc_dpcm_get_substream(fe, stream);
++	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+ 	struct snd_soc_dpcm *dpcm;
+ 	enum snd_soc_dpcm_trigger trigger = fe->dai_link->trigger[stream];
+ 	int ret = 0;
+@@ -2562,13 +2687,31 @@
+ 	if (ret < 0)
+ 		goto disconnect;
+ 
++	/* start the DAI frontend */
++	if (fe->dai_link->dpcm_loopback) {
++		ret = __soc_pcm_open(rtd, substream);
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: failed to start FE %d\n", ret);
++			goto close;
++		}
++	}
++
+ 	/* keep going if FE state is > open */
+ 	if (fe->dpcm[stream].state == SND_SOC_DPCM_STATE_OPEN)
+ 		return 0;
+ 
+ 	ret = dpcm_be_dai_hw_params(fe, stream);
+ 	if (ret < 0)
+-		goto close;
++		goto fe_shutdown;
++
++	/* call hw_params on the frontend if it's a loopback FE */
++	if (fe->dai_link->dpcm_loopback) {
++		ret = __soc_pcm_hw_params(rtd, substream, NULL);
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: hw_params for FE failed %d\n", ret);
++			goto hw_free;
++		}
++	}
+ 
+ 	/* keep going if FE state is > hw_params */
+ 	if (fe->dpcm[stream].state == SND_SOC_DPCM_STATE_HW_PARAMS)
+@@ -2576,38 +2719,96 @@
+ 
+ 	ret = dpcm_be_dai_prepare(fe, stream);
+ 	if (ret < 0)
+-		goto hw_free;
++		goto fe_hw_free;
+ 
+ 	/* run the stream event for each BE */
+ 	dpcm_dapm_stream_event(fe, stream, SND_SOC_DAPM_STREAM_NOP);
+ 
++	/* call prepare on the frontend if it's a loopback FE */
++	if (fe->dai_link->dpcm_loopback) {
++		ret = __soc_pcm_prepare(rtd, substream);
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: prepare for FE %s failed\n",
++				fe->dai_link->name);
++			goto fe_hw_free;
++		}
++	}
++
+ 	/* keep going if FE state is > prepare */
+ 	if (fe->dpcm[stream].state == SND_SOC_DPCM_STATE_PREPARE ||
+ 		fe->dpcm[stream].state == SND_SOC_DPCM_STATE_STOP)
+ 		return 0;
+ 
+-	if (trigger == SND_SOC_DPCM_TRIGGER_BESPOKE) {
++	switch (trigger) {
++	case SND_SOC_DPCM_TRIGGER_BESPOKE:
+ 		/* call trigger on the frontend - FE takes care of all BE triggers */
+ 		dev_dbg(fe->dev, "ASoC: bespoke trigger FE %s cmd start\n",
+ 				fe->dai_link->name);
+ 
+ 		ret = snd_soc_pcm_dai_bespoke_trigger(substream, SNDRV_PCM_TRIGGER_START);
+-		if (ret < 0)
+-			goto hw_free;
+-	} else {
+-		dev_dbg(fe->dev, "ASoC: trigger FE %s cmd start\n",
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: bespoke trigger FE failed %d\n", ret);
++			goto fe_hw_free;
++		}
++		break;
++	case SND_SOC_DPCM_TRIGGER_PRE:
++		dev_dbg(fe->dev, "ASoC: PRE trigger FE %s cmd start\n",
+ 			fe->dai_link->name);
+ 
+-		ret = dpcm_be_dai_trigger(fe, stream,
+-					SNDRV_PCM_TRIGGER_START);
+-		if (ret < 0)
+-			goto hw_free;
++		/* call trigger on the frontend if it's a loopback FE */
++		if (fe->dai_link->dpcm_loopback) {
++			ret = soc_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
++			if (ret < 0) {
++				dev_err(fe->dev, "ASoC: trigger for FE failed %d\n", ret);
++				goto fe_hw_free;
++			}
++		}
++
++		ret = dpcm_be_dai_trigger(fe, stream, SNDRV_PCM_TRIGGER_START);
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: trigger FE failed %d\n", ret);
++			if (fe->dai_link->dpcm_loopback) {
++				ret = soc_pcm_trigger(substream, SNDRV_PCM_TRIGGER_STOP);
++				if (ret < 0) {
++					dev_err(fe->dev, "ASoC: stop trigger for FE failed %d\n",
++						ret);
++				}
++			}
++			goto fe_hw_free;
++		}
++		break;
++	case SND_SOC_DPCM_TRIGGER_POST:
++		dev_dbg(fe->dev, "ASoC: POST trigger FE %s cmd start\n",
++			fe->dai_link->name);
++
++		ret = dpcm_be_dai_trigger(fe, stream, SNDRV_PCM_TRIGGER_START);
++		if (ret < 0) {
++			dev_err(fe->dev, "ASoC: trigger FE failed %d\n", ret);
++			goto fe_hw_free;
++		}
++
++		/* call trigger on the frontend if it's a loopback FE */
++		if (fe->dai_link->dpcm_loopback) {
++			ret = soc_pcm_trigger(substream, SNDRV_PCM_TRIGGER_START);
++			if (ret < 0) {
++				dev_err(fe->dev, "ASoC: trigger for FE failed %d\n", ret);
++				dpcm_be_dai_trigger(fe, stream, SNDRV_PCM_TRIGGER_STOP);
++				goto fe_hw_free;
++			}
++		}
++		break;
+ 	}
+ 
+ 	return 0;
+ 
++fe_hw_free:
++	if (fe->dai_link->dpcm_loopback)
++		__soc_pcm_hw_free(rtd, substream);
+ hw_free:
+ 	dpcm_be_dai_hw_free(fe, stream);
++fe_shutdown:
++	if (fe->dai_link->dpcm_loopback)
++		__soc_pcm_close(rtd, substream);
+ close:
+ 	dpcm_be_dai_shutdown(fe, stream);
+ disconnect:
+@@ -2632,6 +2833,7 @@
+ 	struct snd_soc_dapm_widget_list *list;
+ 	int stream;
+ 	int count, paths;
++	int ret = 0;
+ 
+ 	if (!fe->dai_link->dynamic)
+ 		return 0;
+@@ -2650,6 +2852,20 @@
+ 	dev_dbg(fe->dev, "ASoC: DPCM %s runtime update for FE %s\n",
+ 		new ? "new" : "old", fe->dai_link->name);
+ 
++	if (fe->dai_link->dpcm_loopback && new) {
++		if (!fe->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->runtime ||
++		    !fe->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->runtime) {
++			struct snd_pcm_runtime *runtime;
++
++			runtime = kzalloc(sizeof(*runtime), GFP_KERNEL);
++			if (!runtime)
++				return -ENOMEM;
++
++			fe->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->runtime = runtime;
++			fe->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->runtime = runtime;
++		}
++	}
++
+ 	for_each_pcm_streams(stream) {
+ 
+ 		/* skip if FE doesn't have playback/capture capability */
+@@ -2658,9 +2874,11 @@
+ 			continue;
+ 
+ 		/* skip if FE isn't currently playing/capturing */
+-		if (!snd_soc_dai_stream_active(asoc_rtd_to_cpu(fe, 0), stream) ||
+-		    !snd_soc_dai_stream_active(asoc_rtd_to_codec(fe, 0), stream))
++		if (!fe->dai_link->dpcm_loopback &&
++		    (!snd_soc_dai_stream_active(asoc_rtd_to_cpu(fe, 0), stream) ||
++		     !snd_soc_dai_stream_active(asoc_rtd_to_codec(fe, 0), stream))) {
+ 			continue;
++		}
+ 
+ 		paths = dpcm_path_get(fe, stream, &list);
+ 		if (paths < 0)
+@@ -2670,10 +2888,16 @@
+ 		count = dpcm_process_paths(fe, stream, &list, new);
+ 		if (count) {
+ 			dpcm_set_fe_update_state(fe, stream, SND_SOC_DPCM_UPDATE_BE);
+-			if (new)
+-				dpcm_run_update_startup(fe, stream);
+-			else
+-				dpcm_run_update_shutdown(fe, stream);
++			if (new) {
++				ret = dpcm_run_update_startup(fe, stream);
++				if (ret < 0)
++					dev_err(fe->dev, "ASoC: failed to startup some BEs\n");
++			} else {
++				ret = dpcm_run_update_shutdown(fe, stream);
++				if (ret < 0)
++					dev_err(fe->dev, "ASoC: failed to shutdown some BEs\n");
++				ret = 0;
++			}
+ 			dpcm_set_fe_update_state(fe, stream, SND_SOC_DPCM_UPDATE_NO);
+ 
+ 			dpcm_clear_pending_state(fe, stream);
+@@ -2683,7 +2907,19 @@
+ 		dpcm_path_put(&list);
+ 	}
+ 
+-	return 0;
++	if (fe->dai_link->dpcm_loopback && !new) {
++		struct snd_pcm_runtime *runtime = NULL;
++
++		if (fe->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->runtime)
++			runtime = fe->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->runtime;
++		else if (fe->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->runtime)
++			runtime = fe->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->runtime;
++
++		kfree(runtime);
++		fe->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->runtime = NULL;
++		fe->pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->runtime = NULL;
++	}
++	return ret;
+ }
+ 
+ /* Called by DAPM mixer/mux changes to update audio routing between PCMs and
+@@ -2705,8 +2941,10 @@
+ 	/* bring new paths up */
+ 	for_each_card_rtds(card, fe) {
+ 		ret = soc_dpcm_fe_runtime_update(fe, 1);
+-		if (ret)
++		if (ret) {
++			soc_dpcm_fe_runtime_update(fe, 0);
+ 			goto out;
++		}
+ 	}
+ 
+ out:

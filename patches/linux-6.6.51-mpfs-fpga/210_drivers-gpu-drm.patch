@@ -1,0 +1,2565 @@
+--- linux-6.6.51/Documentation/devicetree/bindings/display/panel/himax,hx8394.yaml	2024-12-05 13:07:30.587417200 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/display/panel/himax,hx8394.yaml	2024-12-04 16:41:09.711721400 +0900
+@@ -23,6 +23,7 @@
+     items:
+       - enum:
+           - hannstar,hsd060bhw4
++          - microchip,ac40t08a-mipi-panel
+       - const: himax,hx8394
+ 
+   reg: true
+@@ -42,7 +43,6 @@
+ required:
+   - compatible
+   - reg
+-  - reset-gpios
+   - backlight
+   - port
+   - vcc-supply
+--- linux-6.6.51/Documentation/devicetree/bindings/display/panel/panel-simple.yaml	2024-12-05 13:07:30.598388000 +0900
++++ linux4microchip-fpga-2024.09/Documentation/devicetree/bindings/display/panel/panel-simple.yaml	2024-12-04 16:41:09.726681400 +0900
+@@ -312,6 +312,8 @@
+       - sharp,ls020b1dd01d
+         # Shelly SCA07010-BFN-LNN 7.0" WVGA TFT LCD panel
+       - shelly,sca07010-bfn-lnn
++        # Sitronix ST7262 1200CH 5" WVGA (800x480) LVDS TFT LCD panel
++      - sitronix,st7262
+         # Starry KR070PE2T 7" WVGA TFT LCD panel
+       - starry,kr070pe2t
+         # Starry 12.2" (1920x1200 pixels) TFT LCD panel
+--- linux-6.6.51/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_crtc.c	2024-12-05 13:07:43.720284600 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_crtc.c	2024-12-04 16:41:24.307932600 +0900
+@@ -30,10 +30,12 @@
+  *
+  * @base: base CRTC state
+  * @output_mode: RGBXXX output mode
++ * @dpi: output DPI mode
+  */
+ struct atmel_hlcdc_crtc_state {
+ 	struct drm_crtc_state base;
+ 	unsigned int output_mode;
++	u8 dpi;
+ };
+ 
+ static inline struct atmel_hlcdc_crtc_state *
+@@ -79,6 +81,7 @@
+ 	unsigned int mask = ATMEL_HLCDC_CLKDIV_MASK | ATMEL_HLCDC_CLKPOL;
+ 	unsigned int cfg = 0;
+ 	int div, ret;
++	bool is_xlcdc = crtc->dc->desc->is_xlcdc;
+ 
+ 	/* get encoder from crtc */
+ 	drm_for_each_encoder(en_iter, ddev) {
+@@ -97,9 +100,75 @@
+ 		drm_connector_list_iter_end(&iter);
+ 	}
+ 
+-	ret = clk_prepare_enable(crtc->dc->hlcdc->sys_clk);
+-	if (ret)
+-		return;
++	if (crtc->dc->hlcdc->lvds_pll_clk) {
++		ret = clk_prepare_enable(crtc->dc->hlcdc->lvds_pll_clk);
++		if (ret)
++			return;
++	} else {
++		ret = clk_prepare_enable(crtc->dc->hlcdc->sys_clk);
++		if (ret)
++			return;
++	}
++
++	if (crtc->dc->hlcdc->lvds_pll_clk) {
++		cfg |= ATMEL_XLCDC_CLKBYP;
++		mask |= ATMEL_XLCDC_CLKBYP;
++	} else {
++		prate = clk_get_rate(crtc->dc->hlcdc->sys_clk);
++		mode_rate = adj->crtc_clock * 1000;
++		if (!crtc->dc->desc->fixed_clksrc) {
++			prate *= 2;
++			if (is_xlcdc) {
++				cfg |= ATMEL_XLCDC_CLKBYP;
++				mask |= ATMEL_XLCDC_CLKBYP;
++			} else {
++				cfg |= ATMEL_HLCDC_CLKSEL;
++				mask |= ATMEL_HLCDC_CLKSEL;
++			}
++		}
++
++		div = DIV_ROUND_UP(prate, mode_rate);
++		if (div < 2) {
++			div = 2;
++		} else if (ATMEL_HLCDC_CLKDIV(div) & ~ATMEL_HLCDC_CLKDIV_MASK) {
++			/* The divider ended up too big, try a lower base rate. */
++			if (is_xlcdc)
++				cfg &= ~ATMEL_XLCDC_CLKBYP;
++			else
++				cfg &= ~ATMEL_HLCDC_CLKSEL;
++
++			prate /= 2;
++			div = DIV_ROUND_UP(prate, mode_rate);
++			if (ATMEL_HLCDC_CLKDIV(div) & ~ATMEL_HLCDC_CLKDIV_MASK)
++				div = ATMEL_HLCDC_CLKDIV_MASK;
++		} else {
++			int div_low = prate / mode_rate;
++
++			/*
++			 * Its better to use a higher Pixel clock
++			 * frequency than requested, instead of a lower.
++			 * So, go with that.
++			 */
++
++			if (div_low >= 2 &&
++			    ((prate / div_low >= mode_rate) &&
++			     (prate / div < mode_rate))) {
++				div = div_low;
++			} else {
++				if (is_xlcdc) {
++					cfg |= ATMEL_XLCDC_CLKBYP;
++					mask |= ATMEL_XLCDC_CLKBYP;
++				}
++			}
++		}
++		cfg |= ATMEL_HLCDC_CLKDIV(div);
++	}
++
++	if (connector &&
++	    connector->display_info.bus_flags & DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE)
++		cfg |= ATMEL_HLCDC_CLKPOL;
++
++	regmap_update_bits(regmap, ATMEL_HLCDC_CFG(0), mask, cfg);
+ 
+ 	vm.vfront_porch = adj->crtc_vsync_start - adj->crtc_vdisplay;
+ 	vm.vback_porch = adj->crtc_vtotal - adj->crtc_vsync_end;
+@@ -121,53 +190,15 @@
+ 		     (adj->crtc_hdisplay - 1) |
+ 		     ((adj->crtc_vdisplay - 1) << 16));
+ 
+-	prate = clk_get_rate(crtc->dc->hlcdc->sys_clk);
+-	mode_rate = adj->crtc_clock * 1000;
+-	if (!crtc->dc->desc->fixed_clksrc) {
+-		prate *= 2;
+-		cfg |= ATMEL_HLCDC_CLKSEL;
+-		mask |= ATMEL_HLCDC_CLKSEL;
+-	}
+-
+-	div = DIV_ROUND_UP(prate, mode_rate);
+-	if (div < 2) {
+-		div = 2;
+-	} else if (ATMEL_HLCDC_CLKDIV(div) & ~ATMEL_HLCDC_CLKDIV_MASK) {
+-		/* The divider ended up too big, try a lower base rate. */
+-		cfg &= ~ATMEL_HLCDC_CLKSEL;
+-		prate /= 2;
+-		div = DIV_ROUND_UP(prate, mode_rate);
+-		if (ATMEL_HLCDC_CLKDIV(div) & ~ATMEL_HLCDC_CLKDIV_MASK)
+-			div = ATMEL_HLCDC_CLKDIV_MASK;
+-	} else {
+-		int div_low = prate / mode_rate;
+-
+-		if (div_low >= 2 &&
+-		    (10 * (prate / div_low - mode_rate) <
+-		     (mode_rate - prate / div)))
+-			/*
+-			 * At least 10 times better when using a higher
+-			 * frequency than requested, instead of a lower.
+-			 * So, go with that.
+-			 */
+-			div = div_low;
+-	}
+-
+-	cfg |= ATMEL_HLCDC_CLKDIV(div);
+-
+-	if (connector &&
+-	    connector->display_info.bus_flags & DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE)
+-		cfg |= ATMEL_HLCDC_CLKPOL;
+-
+-	regmap_update_bits(regmap, ATMEL_HLCDC_CFG(0), mask, cfg);
+-
+ 	state = drm_crtc_state_to_atmel_hlcdc_crtc_state(c->state);
+ 	cfg = state->output_mode << 8;
++	if (is_xlcdc)
++		cfg |= state->dpi << 11;
+ 
+-	if (adj->flags & DRM_MODE_FLAG_NVSYNC)
++	if (!is_xlcdc && (adj->flags & DRM_MODE_FLAG_NVSYNC))
+ 		cfg |= ATMEL_HLCDC_VSPOL;
+ 
+-	if (adj->flags & DRM_MODE_FLAG_NHSYNC)
++	if (!is_xlcdc && (adj->flags & DRM_MODE_FLAG_NHSYNC))
+ 		cfg |= ATMEL_HLCDC_HSPOL;
+ 
+ 	regmap_update_bits(regmap, ATMEL_HLCDC_CFG(5),
+@@ -175,10 +206,15 @@
+ 			   ATMEL_HLCDC_VSPDLYS | ATMEL_HLCDC_VSPDLYE |
+ 			   ATMEL_HLCDC_DISPPOL | ATMEL_HLCDC_DISPDLY |
+ 			   ATMEL_HLCDC_VSPSU | ATMEL_HLCDC_VSPHO |
+-			   ATMEL_HLCDC_GUARDTIME_MASK | ATMEL_HLCDC_MODE_MASK,
++			   ATMEL_HLCDC_GUARDTIME_MASK |
++			   (is_xlcdc ? ATMEL_XLCDC_MODE_MASK |
++			   ATMEL_XLCDC_DPI : ATMEL_HLCDC_MODE_MASK),
+ 			   cfg);
+ 
+-	clk_disable_unprepare(crtc->dc->hlcdc->sys_clk);
++	if (crtc->dc->hlcdc->lvds_pll_clk)
++		clk_disable_unprepare(crtc->dc->hlcdc->lvds_pll_clk);
++	else
++		clk_disable_unprepare(crtc->dc->hlcdc->sys_clk);
+ }
+ 
+ static enum drm_mode_status
+@@ -202,6 +238,20 @@
+ 
+ 	pm_runtime_get_sync(dev->dev);
+ 
++	if (crtc->dc->desc->is_xlcdc) {
++		regmap_write(regmap, ATMEL_HLCDC_DIS, ATMEL_XLCDC_CM);
++		if (regmap_read_poll_timeout(regmap, ATMEL_HLCDC_SR, status,
++					     !(status & ATMEL_XLCDC_CM),
++					     10, 1000))
++			dev_warn(dev->dev, "Atmel LCDC status register CMSTS timeout\n");
++
++		regmap_write(regmap, ATMEL_HLCDC_DIS, ATMEL_XLCDC_SD);
++		if (regmap_read_poll_timeout(regmap, ATMEL_HLCDC_SR, status,
++					     status & ATMEL_XLCDC_SD,
++					     10, 1000))
++			dev_warn(dev->dev, "Atmel LCDC status register SDSTS timeout\n");
++	}
++
+ 	regmap_write(regmap, ATMEL_HLCDC_DIS, ATMEL_HLCDC_DISP);
+ 	while (!regmap_read(regmap, ATMEL_HLCDC_SR, &status) &&
+ 	       (status & ATMEL_HLCDC_DISP))
+@@ -217,7 +267,11 @@
+ 	       (status & ATMEL_HLCDC_PIXEL_CLK))
+ 		cpu_relax();
+ 
+-	clk_disable_unprepare(crtc->dc->hlcdc->sys_clk);
++	if (crtc->dc->hlcdc->lvds_pll_clk)
++		clk_disable_unprepare(crtc->dc->hlcdc->lvds_pll_clk);
++	else
++		clk_disable_unprepare(crtc->dc->hlcdc->sys_clk);
++
+ 	pinctrl_pm_select_sleep_state(dev->dev);
+ 
+ 	pm_runtime_allow(dev->dev);
+@@ -230,15 +284,37 @@
+ {
+ 	struct drm_device *dev = c->dev;
+ 	struct atmel_hlcdc_crtc *crtc = drm_crtc_to_atmel_hlcdc_crtc(c);
++	struct drm_display_mode *adj = &c->state->adjusted_mode;
+ 	struct regmap *regmap = crtc->dc->hlcdc->regmap;
+ 	unsigned int status;
++	int ret;
+ 
+ 	pm_runtime_get_sync(dev->dev);
+ 
+ 	pm_runtime_forbid(dev->dev);
+ 
+ 	pinctrl_pm_select_default_state(dev->dev);
+-	clk_prepare_enable(crtc->dc->hlcdc->sys_clk);
++
++	if (crtc->dc->hlcdc->lvds_pll_clk) {
++		/* If the LVDS interface is used, fetch the pixel clock
++		 * from the panel and set the clock rate.
++		 * Here LVDS PLL clock is 7 times the pixel clock.
++		 */
++		ret = clk_set_rate(crtc->dc->hlcdc->lvds_pll_clk,
++				   (adj->clock * 7 * 1000));
++		if (ret) {
++			dev_err(c->dev->dev, "failed to set clk rate for lvds pll: %d\n", ret);
++			return;
++		}
++
++		ret = clk_prepare_enable(crtc->dc->hlcdc->lvds_pll_clk);
++		if (ret)
++			return;
++	} else {
++		ret = clk_prepare_enable(crtc->dc->hlcdc->sys_clk);
++		if (ret)
++			return;
++	}
+ 
+ 	regmap_write(regmap, ATMEL_HLCDC_EN, ATMEL_HLCDC_PIXEL_CLK);
+ 	while (!regmap_read(regmap, ATMEL_HLCDC_SR, &status) &&
+@@ -256,15 +332,36 @@
+ 	       !(status & ATMEL_HLCDC_DISP))
+ 		cpu_relax();
+ 
++	if (crtc->dc->desc->is_xlcdc) {
++		regmap_write(regmap, ATMEL_HLCDC_EN, ATMEL_XLCDC_CM);
++		if (regmap_read_poll_timeout(regmap, ATMEL_HLCDC_SR, status,
++					     status & ATMEL_XLCDC_CM,
++					     10, 1000))
++			dev_warn(dev->dev, "Atmel LCDC status register CMSTS timeout\n");
++
++		regmap_write(regmap, ATMEL_HLCDC_EN, ATMEL_XLCDC_SD);
++		if (regmap_read_poll_timeout(regmap, ATMEL_HLCDC_SR, status,
++					     !(status & ATMEL_XLCDC_SD),
++					     10, 1000))
++			dev_warn(dev->dev, "Atmel LCDC status register SDSTS timeout\n");
++	}
++
+ 	pm_runtime_put_sync(dev->dev);
+ 
+ }
+ 
+-#define ATMEL_HLCDC_RGB444_OUTPUT	BIT(0)
+-#define ATMEL_HLCDC_RGB565_OUTPUT	BIT(1)
+-#define ATMEL_HLCDC_RGB666_OUTPUT	BIT(2)
+-#define ATMEL_HLCDC_RGB888_OUTPUT	BIT(3)
+-#define ATMEL_HLCDC_OUTPUT_MODE_MASK	GENMASK(3, 0)
++#define ATMEL_HLCDC_RGB444_OUTPUT		BIT(0)
++#define ATMEL_HLCDC_RGB565_OUTPUT		BIT(1)
++#define ATMEL_HLCDC_RGB666_OUTPUT		BIT(2)
++#define ATMEL_HLCDC_RGB888_OUTPUT		BIT(3)
++#define ATMEL_HLCDC_DPI_RGB565C1_OUTPUT		BIT(4)
++#define ATMEL_HLCDC_DPI_RGB565C2_OUTPUT		BIT(5)
++#define ATMEL_HLCDC_DPI_RGB565C3_OUTPUT		BIT(6)
++#define ATMEL_HLCDC_DPI_RGB666C1_OUTPUT		BIT(7)
++#define ATMEL_HLCDC_DPI_RGB666C2_OUTPUT		BIT(8)
++#define ATMEL_HLCDC_DPI_RGB888_OUTPUT		BIT(9)
++#define ATMEL_HLCDC_OUTPUT_MODE_MASK		GENMASK(3, 0)
++#define ATMEL_XLCDC_OUTPUT_MODE_MASK		GENMASK(9, 0)
+ 
+ static int atmel_hlcdc_connector_output_mode(struct drm_connector_state *state)
+ {
+@@ -278,53 +375,129 @@
+ 	if (!encoder)
+ 		encoder = connector->encoder;
+ 
+-	switch (atmel_hlcdc_encoder_get_bus_fmt(encoder)) {
+-	case 0:
+-		break;
+-	case MEDIA_BUS_FMT_RGB444_1X12:
+-		return ATMEL_HLCDC_RGB444_OUTPUT;
+-	case MEDIA_BUS_FMT_RGB565_1X16:
+-		return ATMEL_HLCDC_RGB565_OUTPUT;
+-	case MEDIA_BUS_FMT_RGB666_1X18:
+-		return ATMEL_HLCDC_RGB666_OUTPUT;
+-	case MEDIA_BUS_FMT_RGB888_1X24:
+-		return ATMEL_HLCDC_RGB888_OUTPUT;
+-	default:
+-		return -EINVAL;
+-	}
+-
+-	for (j = 0; j < info->num_bus_formats; j++) {
+-		switch (info->bus_formats[j]) {
+-		case MEDIA_BUS_FMT_RGB444_1X12:
+-			supported_fmts |= ATMEL_HLCDC_RGB444_OUTPUT;
++	switch (encoder->encoder_type) {
++	case DRM_MODE_ENCODER_DSI:
++		/*
++		 * atmel-hlcdc to support DSI formats with DSI video pipeline
++		 * when DRM_MODE_ENCODER_DSI type is set by
++		 * connector driver component.
++		 */
++		switch (atmel_hlcdc_encoder_get_bus_fmt(encoder)) {
++		case 0:
+ 			break;
+ 		case MEDIA_BUS_FMT_RGB565_1X16:
+-			supported_fmts |= ATMEL_HLCDC_RGB565_OUTPUT;
+-			break;
++			return ATMEL_HLCDC_DPI_RGB565C1_OUTPUT;
+ 		case MEDIA_BUS_FMT_RGB666_1X18:
+-			supported_fmts |= ATMEL_HLCDC_RGB666_OUTPUT;
+-			break;
++			return ATMEL_HLCDC_DPI_RGB666C1_OUTPUT;
++		case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
++			return ATMEL_HLCDC_DPI_RGB666C2_OUTPUT;
+ 		case MEDIA_BUS_FMT_RGB888_1X24:
+-			supported_fmts |= ATMEL_HLCDC_RGB888_OUTPUT;
++			return ATMEL_HLCDC_DPI_RGB888_OUTPUT;
++		default:
++			return -EINVAL;
++		}
++
++		for (j = 0; j < info->num_bus_formats; j++) {
++			switch (info->bus_formats[j]) {
++			case MEDIA_BUS_FMT_RGB565_1X16:
++				supported_fmts |=
++					ATMEL_HLCDC_DPI_RGB565C1_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB666_1X18:
++				supported_fmts |=
++					ATMEL_HLCDC_DPI_RGB666C1_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
++				supported_fmts |=
++					ATMEL_HLCDC_DPI_RGB666C2_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB888_1X24:
++				supported_fmts |=
++					ATMEL_HLCDC_DPI_RGB888_OUTPUT;
++				break;
++			default:
++				break;
++			}
++		}
++		break;
++	case DRM_MODE_ENCODER_LVDS:
++		switch (atmel_hlcdc_encoder_get_bus_fmt(encoder)) {
++		case 0:
+ 			break;
++		case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
++		case MEDIA_BUS_FMT_RGB666_1X18:
++			return ATMEL_HLCDC_RGB666_OUTPUT;
++		case MEDIA_BUS_FMT_RGB888_1X7X4_SPWG:
++		case MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA:
+ 		default:
++			return ATMEL_HLCDC_RGB888_OUTPUT;
++		}
++
++		for (j = 0; j < info->num_bus_formats; j++) {
++			switch (info->bus_formats[j]) {
++			case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
++			case MEDIA_BUS_FMT_RGB666_1X18:
++				supported_fmts |= ATMEL_HLCDC_RGB666_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB888_1X7X4_SPWG:
++			case MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA:
++			default:
++				supported_fmts |= ATMEL_HLCDC_RGB888_OUTPUT;
++				break;
++			}
++		}
++		break;
++	default:
++		switch (atmel_hlcdc_encoder_get_bus_fmt(encoder)) {
++		case 0:
+ 			break;
++		case MEDIA_BUS_FMT_RGB444_1X12:
++			return ATMEL_HLCDC_RGB444_OUTPUT;
++		case MEDIA_BUS_FMT_RGB565_1X16:
++			return ATMEL_HLCDC_RGB565_OUTPUT;
++		case MEDIA_BUS_FMT_RGB666_1X18:
++			return ATMEL_HLCDC_RGB666_OUTPUT;
++		case MEDIA_BUS_FMT_RGB888_1X24:
++			return ATMEL_HLCDC_RGB888_OUTPUT;
++		default:
++			return -EINVAL;
+ 		}
+-	}
+ 
++		for (j = 0; j < info->num_bus_formats; j++) {
++			switch (info->bus_formats[j]) {
++			case MEDIA_BUS_FMT_RGB444_1X12:
++				supported_fmts |= ATMEL_HLCDC_RGB444_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB565_1X16:
++				supported_fmts |= ATMEL_HLCDC_RGB565_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB666_1X18:
++				supported_fmts |= ATMEL_HLCDC_RGB666_OUTPUT;
++				break;
++			case MEDIA_BUS_FMT_RGB888_1X24:
++				supported_fmts |= ATMEL_HLCDC_RGB888_OUTPUT;
++				break;
++			default:
++				break;
++			}
++		}
++		break;
++	}
+ 	return supported_fmts;
+ }
+ 
+ static int atmel_hlcdc_crtc_select_output_mode(struct drm_crtc_state *state)
+ {
+-	unsigned int output_fmts = ATMEL_HLCDC_OUTPUT_MODE_MASK;
++	unsigned int output_fmts;
+ 	struct atmel_hlcdc_crtc_state *hstate;
+ 	struct drm_connector_state *cstate;
+ 	struct drm_connector *connector;
+-	struct atmel_hlcdc_crtc *crtc;
++	struct atmel_hlcdc_crtc *crtc = drm_crtc_to_atmel_hlcdc_crtc(state->crtc);
+ 	int i;
++	bool is_xlcdc = crtc->dc->desc->is_xlcdc;
+ 
+-	crtc = drm_crtc_to_atmel_hlcdc_crtc(state->crtc);
++	output_fmts = is_xlcdc ? ATMEL_XLCDC_OUTPUT_MODE_MASK :
++		      ATMEL_HLCDC_OUTPUT_MODE_MASK;
+ 
+ 	for_each_new_connector_in_state(state->state, connector, cstate, i) {
+ 		unsigned int supported_fmts = 0;
+@@ -345,7 +518,15 @@
+ 
+ 	hstate = drm_crtc_state_to_atmel_hlcdc_crtc_state(state);
+ 	hstate->output_mode = fls(output_fmts) - 1;
+-
++	if (is_xlcdc) {
++		/* check if MIPI DPI bit needs to be set */
++		if (fls(output_fmts) > 3) {
++			hstate->output_mode -= 4;
++			hstate->dpi = 1;
++		} else {
++			hstate->dpi = 0;
++		}
++	}
+ 	return 0;
+ }
+ 
+@@ -449,6 +630,7 @@
+ atmel_hlcdc_crtc_duplicate_state(struct drm_crtc *crtc)
+ {
+ 	struct atmel_hlcdc_crtc_state *state, *cur;
++	struct atmel_hlcdc_crtc *c = drm_crtc_to_atmel_hlcdc_crtc(crtc);
+ 
+ 	if (WARN_ON(!crtc->state))
+ 		return NULL;
+@@ -460,6 +642,8 @@
+ 
+ 	cur = drm_crtc_state_to_atmel_hlcdc_crtc_state(crtc->state);
+ 	state->output_mode = cur->output_mode;
++	if (c->dc->desc->is_xlcdc)
++		state->dpi = cur->dpi;
+ 
+ 	return &state->base;
+ }
+--- linux-6.6.51/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_dc.c	2024-12-05 13:07:43.721281800 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_dc.c	2024-12-04 16:41:24.308930000 +0900
+@@ -58,6 +58,7 @@
+ 	.conflicting_output_formats = true,
+ 	.nlayers = ARRAY_SIZE(atmel_hlcdc_at91sam9n12_layers),
+ 	.layers = atmel_hlcdc_at91sam9n12_layers,
++	.ops = &atmel_hlcdc_ops,
+ };
+ 
+ static const struct atmel_hlcdc_layer_desc atmel_hlcdc_at91sam9x5_layers[] = {
+@@ -151,6 +152,7 @@
+ 	.conflicting_output_formats = true,
+ 	.nlayers = ARRAY_SIZE(atmel_hlcdc_at91sam9x5_layers),
+ 	.layers = atmel_hlcdc_at91sam9x5_layers,
++	.ops = &atmel_hlcdc_ops,
+ };
+ 
+ static const struct atmel_hlcdc_layer_desc atmel_hlcdc_sama5d3_layers[] = {
+@@ -269,6 +271,7 @@
+ 	.conflicting_output_formats = true,
+ 	.nlayers = ARRAY_SIZE(atmel_hlcdc_sama5d3_layers),
+ 	.layers = atmel_hlcdc_sama5d3_layers,
++	.ops = &atmel_hlcdc_ops,
+ };
+ 
+ static const struct atmel_hlcdc_layer_desc atmel_hlcdc_sama5d4_layers[] = {
+@@ -364,6 +367,7 @@
+ 	.max_hpw = 0x3ff,
+ 	.nlayers = ARRAY_SIZE(atmel_hlcdc_sama5d4_layers),
+ 	.layers = atmel_hlcdc_sama5d4_layers,
++	.ops = &atmel_hlcdc_ops,
+ };
+ 
+ static const struct atmel_hlcdc_layer_desc atmel_hlcdc_sam9x60_layers[] = {
+@@ -460,6 +464,180 @@
+ 	.fixed_clksrc = true,
+ 	.nlayers = ARRAY_SIZE(atmel_hlcdc_sam9x60_layers),
+ 	.layers = atmel_hlcdc_sam9x60_layers,
++	.ops = &atmel_hlcdc_ops,
++};
++
++static const struct atmel_hlcdc_layer_desc atmel_xlcdc_sam9x75_layers[] = {
++	{
++		.name = "base",
++		.formats = &atmel_hlcdc_plane_rgb_formats,
++		.regs_offset = 0x60,
++		.id = 0,
++		.type = ATMEL_HLCDC_BASE_LAYER,
++		.cfgs_offset = 0x1c,
++		.layout = {
++			.xstride = { 2 },
++			.default_color = 3,
++			.general_config = 4,
++			.disc_pos = 5,
++			.disc_size = 6,
++		},
++		.clut_offset = 0x700,
++	},
++	{
++		.name = "overlay1",
++		.formats = &atmel_hlcdc_plane_rgb_formats,
++		.regs_offset = 0x160,
++		.id = 1,
++		.type = ATMEL_HLCDC_OVERLAY_LAYER,
++		.cfgs_offset = 0x1c,
++		.layout = {
++			.pos = 2,
++			.size = 3,
++			.xstride = { 4 },
++			.pstride = { 5 },
++			.default_color = 6,
++			.chroma_key = 7,
++			.chroma_key_mask = 8,
++			.general_config = 9,
++		},
++		.clut_offset = 0xb00,
++	},
++	{
++		.name = "overlay2",
++		.formats = &atmel_hlcdc_plane_rgb_formats,
++		.regs_offset = 0x260,
++		.id = 2,
++		.type = ATMEL_HLCDC_OVERLAY_LAYER,
++		.cfgs_offset = 0x1c,
++		.layout = {
++			.pos = 2,
++			.size = 3,
++			.xstride = { 4 },
++			.pstride = { 5 },
++			.default_color = 6,
++			.chroma_key = 7,
++			.chroma_key_mask = 8,
++			.general_config = 9,
++		},
++		.clut_offset = 0xf00,
++	},
++	{
++		.name = "high-end-overlay",
++		.formats = &atmel_hlcdc_plane_rgb_and_yuv_formats,
++		.regs_offset = 0x360,
++		.id = 3,
++		.type = ATMEL_HLCDC_OVERLAY_LAYER,
++		.cfgs_offset = 0x30,
++		.layout = {
++			.pos = 2,
++			.size = 3,
++			.memsize = 4,
++			.xstride = { 5, 7 },
++			.pstride = { 6, 8 },
++			.default_color = 9,
++			.chroma_key = 10,
++			.chroma_key_mask = 11,
++			.general_config = 12,
++			.csc = 16,
++			.scaler_config = 23,
++			.vxs_config = 30,
++			.hxs_config = 31,
++		},
++		.clut_offset = 0x1300,
++	},
++};
++
++static const struct atmel_hlcdc_dc_desc atmel_xlcdc_dc_sam9x75 = {
++	.min_width = 0,
++	.min_height = 0,
++	.max_width = 2048,
++	.max_height = 2048,
++	.max_spw = 0xff,
++	.max_vpw = 0xff,
++	.max_hpw = 0x3ff,
++	.fixed_clksrc = true,
++	.is_xlcdc = true,
++	.nlayers = ARRAY_SIZE(atmel_xlcdc_sam9x75_layers),
++	.layers = atmel_xlcdc_sam9x75_layers,
++	.ops = &atmel_xlcdc_ops,
++};
++
++static const struct atmel_hlcdc_layer_desc atmel_xlcdc_sama7d65_layers[] = {
++	{
++		.name = "base",
++		.formats = &atmel_hlcdc_plane_rgb_formats,
++		.regs_offset = 0x60,
++		.id = 0,
++		.type = ATMEL_HLCDC_BASE_LAYER,
++		.cfgs_offset = 0x1c,
++		.layout = {
++			.xstride = { 2 },
++			.default_color = 3,
++			.general_config = 4,
++			.disc_pos = 5,
++			.disc_size = 6,
++		},
++		.clut_offset = 0x700,
++	},
++	{
++		.name = "overlay1",
++		.formats = &atmel_hlcdc_plane_rgb_formats,
++		.regs_offset = 0x160,
++		.id = 1,
++		.type = ATMEL_HLCDC_OVERLAY_LAYER,
++		.cfgs_offset = 0x1c,
++		.layout = {
++			.pos = 2,
++			.size = 3,
++			.xstride = { 4 },
++			.pstride = { 5 },
++			.default_color = 6,
++			.chroma_key = 7,
++			.chroma_key_mask = 8,
++			.general_config = 9,
++		},
++		.clut_offset = 0xb00,
++	},
++	{
++		.name = "high-end-overlay",
++		.formats = &atmel_hlcdc_plane_rgb_and_yuv_formats,
++		.regs_offset = 0x360,
++		.id = 2,
++		.type = ATMEL_HLCDC_OVERLAY_LAYER,
++		.cfgs_offset = 0x30,
++		.layout = {
++			.pos = 2,
++			.size = 3,
++			.memsize = 4,
++			.xstride = { 5, 7 },
++			.pstride = { 6, 8 },
++			.default_color = 9,
++			.chroma_key = 10,
++			.chroma_key_mask = 11,
++			.general_config = 12,
++			.csc = 16,
++			.scaler_config = 23,
++			.vxs_config = 30,
++			.hxs_config = 31,
++		},
++		.clut_offset = 0x1300,
++	},
++};
++
++static const struct atmel_hlcdc_dc_desc atmel_xlcdc_dc_sama7d65 = {
++	.min_width = 0,
++	.min_height = 0,
++	.max_width = 2048,
++	.max_height = 2048,
++	.max_spw = 0x3ff,
++	.max_vpw = 0x3ff,
++	.max_hpw = 0x3ff,
++	.fixed_clksrc = false,
++	.is_xlcdc = true,
++	.nlayers = ARRAY_SIZE(atmel_xlcdc_sama7d65_layers),
++	.layers = atmel_xlcdc_sama7d65_layers,
++	.ops = &atmel_xlcdc_ops,
+ };
+ 
+ static const struct of_device_id atmel_hlcdc_of_match[] = {
+@@ -487,6 +665,14 @@
+ 		.compatible = "microchip,sam9x60-hlcdc",
+ 		.data = &atmel_hlcdc_dc_sam9x60,
+ 	},
++	{
++		.compatible = "microchip,sam9x75-xlcdc",
++		.data = &atmel_xlcdc_dc_sam9x75,
++	},
++	{
++		.compatible = "microchip,sama7d65-xlcdc",
++		.data = &atmel_xlcdc_dc_sama7d65,
++	},
+ 	{ /* sentinel */ },
+ };
+ MODULE_DEVICE_TABLE(of, atmel_hlcdc_of_match);
+@@ -762,6 +948,8 @@
+ 
+ 	drm_fbdev_dma_setup(ddev, 24);
+ 
++	dev_info(ddev->dev, "DRM device successfully registered\n");
++
+ 	return 0;
+ 
+ err_unload:
+--- linux-6.6.51/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_dc.h	2024-12-05 13:07:43.726268600 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_dc.h	2024-12-04 16:41:24.308930000 +0900
+@@ -13,8 +13,12 @@
+ 
+ #include <linux/regmap.h>
+ 
++#include <drm/drm_crtc.h>
++#include <drm/drm_encoder.h>
++#include <drm/drm_modes.h>
+ #include <drm/drm_plane.h>
+ 
++/* LCD controller common registers */
+ #define ATMEL_HLCDC_LAYER_CHER			0x0
+ #define ATMEL_HLCDC_LAYER_CHDR			0x4
+ #define ATMEL_HLCDC_LAYER_CHSR			0x8
+@@ -128,6 +132,47 @@
+ 
+ #define ATMEL_HLCDC_MAX_LAYERS			6
+ 
++/* XLCDC controller specific registers */
++#define ATMEL_XLCDC_LAYER_ENR			0x10
++#define ATMEL_XLCDC_LAYER_EN			BIT(0)
++
++#define ATMEL_XLCDC_LAYER_IER			0x0
++#define ATMEL_XLCDC_LAYER_IDR			0x4
++#define ATMEL_XLCDC_LAYER_ISR			0xc
++#define ATMEL_XLCDC_LAYER_OVR_IRQ(p)		BIT(2 + (8 * (p)))
++
++#define ATMEL_XLCDC_LAYER_PLANE_ADDR(p)		(((p) * 0x4) + 0x18)
++
++#define ATMEL_XLCDC_LAYER_DMA_CFG		0
++
++#define ATMEL_XLCDC_LAYER_DMA			BIT(0)
++#define ATMEL_XLCDC_LAYER_REP			BIT(1)
++#define ATMEL_XLCDC_LAYER_DISCEN		BIT(4)
++
++#define ATMEL_XLCDC_LAYER_SFACTC_A0_MULT_AS	(4 << 6)
++#define ATMEL_XLCDC_LAYER_SFACTA_ONE		BIT(9)
++#define ATMEL_XLCDC_LAYER_DFACTC_M_A0_MULT_AS	(6 << 11)
++#define ATMEL_XLCDC_LAYER_DFACTA_ONE		BIT(14)
++
++#define ATMEL_XLCDC_LAYER_A0_SHIFT		16
++#define ATMEL_XLCDC_LAYER_A0(x)			\
++	((x) << ATMEL_XLCDC_LAYER_A0_SHIFT)
++
++#define ATMEL_XLCDC_LAYER_VSCALER_LUMA_ENABLE		BIT(0)
++#define ATMEL_XLCDC_LAYER_VSCALER_CHROMA_ENABLE		BIT(1)
++#define ATMEL_XLCDC_LAYER_HSCALER_LUMA_ENABLE		BIT(4)
++#define ATMEL_XLCDC_LAYER_HSCALER_CHROMA_ENABLE		BIT(5)
++
++#define ATMEL_XLCDC_LAYER_VXSYCFG_ONE		BIT(0)
++#define ATMEL_XLCDC_LAYER_VXSYTAP2_ENABLE	BIT(4)
++#define ATMEL_XLCDC_LAYER_VXSCCFG_ONE		BIT(16)
++#define ATMEL_XLCDC_LAYER_VXSCTAP2_ENABLE	BIT(20)
++
++#define ATMEL_XLCDC_LAYER_HXSYCFG_ONE		BIT(0)
++#define ATMEL_XLCDC_LAYER_HXSYTAP2_ENABLE	BIT(4)
++#define ATMEL_XLCDC_LAYER_HXSCCFG_ONE		BIT(16)
++#define ATMEL_XLCDC_LAYER_HXSCTAP2_ENABLE	BIT(20)
++
+ /**
+  * Atmel HLCDC Layer registers layout structure
+  *
+@@ -156,6 +201,8 @@
+  * @disc_pos: discard area position register
+  * @disc_size: discard area size register
+  * @csc: color space conversion register
++ * @vxs_config: vertical scalar filter taps control register
++ * @hxs_config: horizontal scalar filter taps control register
+  */
+ struct atmel_hlcdc_layer_cfg_layout {
+ 	int xstride[ATMEL_HLCDC_LAYER_MAX_PLANES];
+@@ -175,8 +222,13 @@
+ 	int disc_pos;
+ 	int disc_size;
+ 	int csc;
++	int vxs_config;
++	int hxs_config;
+ };
+ 
++struct atmel_hlcdc_plane_state;
++struct atmel_hlcdc_dc;
++
+ /**
+  * Atmel HLCDC DMA descriptor structure
+  *
+@@ -289,6 +341,37 @@
+ }
+ 
+ /**
++ * struct atmel_lcdc_dc_ops - describes atmel_lcdc ops group
++ * to differentiate HLCDC and XLCDC IP code support.
++ * @plane_setup_scaler: update the vertical and horizontal scaling factors
++ * @update_lcdc_buffers: update the each LCDC layers DMA registers.
++ * @lcdc_atomic_disable: disable LCDC interrupts and layers
++ * @lcdc_update_general_settings: update each LCDC layers general
++ * confiugration register.
++ * @lcdc_atomic_update: enable the LCDC layers and interrupts.
++ * @lcdc_csc_init: update the color space conversion co-efficient of
++ * High-end overlay register.
++ * @lcdc_irq_dbg: to raise alert incase of interrupt overrun in any LCDC layer.
++ */
++struct atmel_lcdc_dc_ops {
++	void (*plane_setup_scaler)(struct atmel_hlcdc_plane *plane,
++				   struct atmel_hlcdc_plane_state *state);
++	void (*update_lcdc_buffers)(struct atmel_hlcdc_plane *plane,
++				    struct atmel_hlcdc_plane_state *state,
++				    u32 sr, int i);
++	void (*lcdc_atomic_disable)(struct atmel_hlcdc_plane *plane,
++				    struct atmel_hlcdc_dc *dc);
++	void (*lcdc_update_general_settings)(struct atmel_hlcdc_plane *plane,
++					     struct atmel_hlcdc_plane_state *state);
++	void (*lcdc_atomic_update)(struct atmel_hlcdc_plane *plane,
++				   struct atmel_hlcdc_dc *dc);
++	void (*lcdc_csc_init)(struct atmel_hlcdc_plane *plane,
++			      const struct atmel_hlcdc_layer_desc *desc);
++	void (*lcdc_irq_dbg)(struct atmel_hlcdc_plane *plane,
++			     const struct atmel_hlcdc_layer_desc *desc);
++};
++
++/**
+  * Atmel HLCDC Display Controller description structure.
+  *
+  * This structure describes the HLCDC IP capabilities and depends on the
+@@ -304,8 +387,10 @@
+  * @conflicting_output_formats: true if RGBXXX output formats conflict with
+  *				each other.
+  * @fixed_clksrc: true if clock source is fixed
++ * @is_xlcdc: true if XLCDC IP is supported
+  * @layers: a layer description table describing available layers
+  * @nlayers: layer description table size
++ * @ops: atmel lcdc dc ops
+  */
+ struct atmel_hlcdc_dc_desc {
+ 	int min_width;
+@@ -317,8 +402,10 @@
+ 	int max_hpw;
+ 	bool conflicting_output_formats;
+ 	bool fixed_clksrc;
++	bool is_xlcdc;
+ 	const struct atmel_hlcdc_layer_desc *layers;
+ 	int nlayers;
++	const struct atmel_lcdc_dc_ops *ops;
+ };
+ 
+ /**
+@@ -345,6 +432,9 @@
+ 	} suspend;
+ };
+ 
++extern const struct atmel_lcdc_dc_ops atmel_hlcdc_ops;
++extern const struct atmel_lcdc_dc_ops atmel_xlcdc_ops;
++
+ extern struct atmel_hlcdc_formats atmel_hlcdc_plane_rgb_formats;
+ extern struct atmel_hlcdc_formats atmel_hlcdc_plane_rgb_and_yuv_formats;
+ 
+--- linux-6.6.51/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_plane.c	2024-12-05 13:07:43.727265800 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/atmel-hlcdc/atmel_hlcdc_plane.c	2024-12-04 16:41:24.309927300 +0900
+@@ -282,8 +282,9 @@
+ 					    coeff_tab[i]);
+ }
+ 
+-static void atmel_hlcdc_plane_setup_scaler(struct atmel_hlcdc_plane *plane,
+-					   struct atmel_hlcdc_plane_state *state)
++static
++void atmel_hlcdc_plane_setup_scaler(struct atmel_hlcdc_plane *plane,
++				    struct atmel_hlcdc_plane_state *state)
+ {
+ 	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
+ 	u32 xfactor, yfactor;
+@@ -330,11 +331,82 @@
+ 								     yfactor));
+ }
+ 
++static
++void atmel_xlcdc_plane_setup_scaler(struct atmel_hlcdc_plane *plane,
++				    struct atmel_hlcdc_plane_state *state)
++{
++	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	u32 xfactor, yfactor;
++
++	if (!desc->layout.scaler_config)
++		return;
++
++	if (state->crtc_w == state->src_w && state->crtc_h == state->src_h) {
++		atmel_hlcdc_layer_write_cfg(&plane->layer,
++					    desc->layout.scaler_config, 0);
++		return;
++	}
++
++	/* xfactor = round[(2^20 * XMEMSIZE)/XSIZE)] */
++	xfactor = (u32)(((1 << 20) * state->src_w) / state->crtc_w);
++
++	/* yfactor = round[(2^20 * YMEMSIZE)/YSIZE)] */
++	yfactor = (u32)(((1 << 20) * state->src_h) / state->crtc_h);
++
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.scaler_config,
++				    ATMEL_XLCDC_LAYER_VSCALER_LUMA_ENABLE |
++				    ATMEL_XLCDC_LAYER_VSCALER_CHROMA_ENABLE |
++				    ATMEL_XLCDC_LAYER_HSCALER_LUMA_ENABLE |
++				    ATMEL_XLCDC_LAYER_HSCALER_CHROMA_ENABLE);
++
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.scaler_config + 1,
++				    yfactor);
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.scaler_config + 3,
++				    xfactor);
++
++	/*
++	 * With YCbCr 4:2:0 window resampling, configuration register
++	 * LCDC_HEOCFG25.VXSCFACT and LCDC_HEOCFG27.HXSCFACT values are half
++	 * the value of yfactor and xfactor.
++	 *
++	 * On the other hand, with YCbCr 4:2:2 window resampling, only the
++	 * configuration register LCDC_HEOCFG27.HXSCFACT value is half the value
++	 * of the xfactor; the value of LCDC_HEOCFG25.VXSCFACT is yfactor (no
++	 * division by 2).
++	 */
++	switch (state->base.fb->format->format) {
++	/* YCbCr 4:2:2 */
++	case DRM_FORMAT_YUYV:
++	case DRM_FORMAT_UYVY:
++	case DRM_FORMAT_YVYU:
++	case DRM_FORMAT_VYUY:
++	case DRM_FORMAT_YUV422:
++	case DRM_FORMAT_NV61:
++		xfactor /= 2;
++		break;
++
++	/* YCbCr 4:2:0 */
++	case DRM_FORMAT_YUV420:
++	case DRM_FORMAT_NV21:
++		yfactor /= 2;
++		xfactor /= 2;
++		break;
++	default:
++		break;
++	}
++
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.scaler_config + 2,
++				    yfactor);
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.scaler_config + 4,
++				    xfactor);
++}
++
+ static void
+ atmel_hlcdc_plane_update_pos_and_size(struct atmel_hlcdc_plane *plane,
+ 				      struct atmel_hlcdc_plane_state *state)
+ {
+ 	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	struct atmel_hlcdc_dc *dc = plane->base.dev->dev_private;
+ 
+ 	if (desc->layout.size)
+ 		atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.size,
+@@ -352,12 +424,12 @@
+ 					ATMEL_HLCDC_LAYER_POS(state->crtc_x,
+ 							      state->crtc_y));
+ 
+-	atmel_hlcdc_plane_setup_scaler(plane, state);
++	dc->desc->ops->plane_setup_scaler(plane, state);
+ }
+ 
+-static void
+-atmel_hlcdc_plane_update_general_settings(struct atmel_hlcdc_plane *plane,
+-					struct atmel_hlcdc_plane_state *state)
++static
++void atmel_hlcdc_plane_update_general_settings(struct atmel_hlcdc_plane *plane,
++					       struct atmel_hlcdc_plane_state *state)
+ {
+ 	unsigned int cfg = ATMEL_HLCDC_LAYER_DMA_BLEN_INCR16 | state->ahb_id;
+ 	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
+@@ -393,6 +465,40 @@
+ 				    cfg);
+ }
+ 
++static
++void atmel_xlcdc_plane_update_general_settings(struct atmel_hlcdc_plane *plane,
++					       struct atmel_hlcdc_plane_state *state)
++{
++	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	const struct drm_format_info *format = state->base.fb->format;
++	unsigned int cfg;
++
++	atmel_hlcdc_layer_write_cfg(&plane->layer, ATMEL_XLCDC_LAYER_DMA_CFG,
++				    ATMEL_HLCDC_LAYER_DMA_BLEN_INCR16 | state->ahb_id);
++
++	cfg = ATMEL_XLCDC_LAYER_DMA | ATMEL_XLCDC_LAYER_REP;
++
++	if (plane->base.type != DRM_PLANE_TYPE_PRIMARY) {
++		/*
++		 * Alpha Blending bits specific to SAM9X7 SoC
++		 */
++		cfg |= ATMEL_XLCDC_LAYER_SFACTC_A0_MULT_AS |
++		       ATMEL_XLCDC_LAYER_SFACTA_ONE |
++		       ATMEL_XLCDC_LAYER_DFACTC_M_A0_MULT_AS |
++		       ATMEL_XLCDC_LAYER_DFACTA_ONE;
++		if (format->has_alpha)
++			cfg |= ATMEL_XLCDC_LAYER_A0(0xff);
++		else
++			cfg |= ATMEL_XLCDC_LAYER_A0(state->base.alpha);
++	}
++
++	if (state->disc_h && state->disc_w)
++		cfg |= ATMEL_XLCDC_LAYER_DISCEN;
++
++	atmel_hlcdc_layer_write_cfg(&plane->layer, desc->layout.general_config,
++				    cfg);
++}
++
+ static void atmel_hlcdc_plane_update_format(struct atmel_hlcdc_plane *plane,
+ 					struct atmel_hlcdc_plane_state *state)
+ {
+@@ -437,36 +543,55 @@
+ 	}
+ }
+ 
++static void update_hlcdc_buffers(struct atmel_hlcdc_plane *plane,
++				 struct atmel_hlcdc_plane_state *state,
++				 u32 sr, int i)
++{
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_HLCDC_LAYER_PLANE_HEAD(i),
++				    state->dscrs[i]->self);
++
++	if (sr & ATMEL_HLCDC_LAYER_EN)
++		return;
++
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_HLCDC_LAYER_PLANE_ADDR(i),
++				    state->dscrs[i]->addr);
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_HLCDC_LAYER_PLANE_CTRL(i),
++				    state->dscrs[i]->ctrl);
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_HLCDC_LAYER_PLANE_NEXT(i),
++				    state->dscrs[i]->self);
++}
++
++static void update_xlcdc_buffers(struct atmel_hlcdc_plane *plane,
++				 struct atmel_hlcdc_plane_state *state,
++				 u32 sr, int i)
++{
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_XLCDC_LAYER_PLANE_ADDR(i),
++				    state->dscrs[i]->addr);
++}
++
+ static void atmel_hlcdc_plane_update_buffers(struct atmel_hlcdc_plane *plane,
+-					struct atmel_hlcdc_plane_state *state)
++					     struct atmel_hlcdc_plane_state *state)
+ {
+ 	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	struct atmel_hlcdc_dc *dc = plane->base.dev->dev_private;
+ 	struct drm_framebuffer *fb = state->base.fb;
+ 	u32 sr;
+ 	int i;
+ 
+-	sr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHSR);
++	if (!dc->desc->is_xlcdc)
++		sr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHSR);
+ 
+ 	for (i = 0; i < state->nplanes; i++) {
+ 		struct drm_gem_dma_object *gem = drm_fb_dma_get_gem_obj(fb, i);
+ 
+ 		state->dscrs[i]->addr = gem->dma_addr + state->offsets[i];
+ 
+-		atmel_hlcdc_layer_write_reg(&plane->layer,
+-					    ATMEL_HLCDC_LAYER_PLANE_HEAD(i),
+-					    state->dscrs[i]->self);
+-
+-		if (!(sr & ATMEL_HLCDC_LAYER_EN)) {
+-			atmel_hlcdc_layer_write_reg(&plane->layer,
+-					ATMEL_HLCDC_LAYER_PLANE_ADDR(i),
+-					state->dscrs[i]->addr);
+-			atmel_hlcdc_layer_write_reg(&plane->layer,
+-					ATMEL_HLCDC_LAYER_PLANE_CTRL(i),
+-					state->dscrs[i]->ctrl);
+-			atmel_hlcdc_layer_write_reg(&plane->layer,
+-					ATMEL_HLCDC_LAYER_PLANE_NEXT(i),
+-					state->dscrs[i]->self);
+-		}
++		dc->desc->ops->update_lcdc_buffers(plane, state, sr, i);
+ 
+ 		if (desc->layout.xstride[i])
+ 			atmel_hlcdc_layer_write_cfg(&plane->layer,
+@@ -712,11 +837,9 @@
+ 	return 0;
+ }
+ 
+-static void atmel_hlcdc_plane_atomic_disable(struct drm_plane *p,
+-					     struct drm_atomic_state *state)
++static void hlcdc_atomic_disable(struct atmel_hlcdc_plane *plane,
++				 struct atmel_hlcdc_dc *dc)
+ {
+-	struct atmel_hlcdc_plane *plane = drm_plane_to_atmel_hlcdc_plane(p);
+-
+ 	/* Disable interrupts */
+ 	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_HLCDC_LAYER_IDR,
+ 				    0xffffffff);
+@@ -731,6 +854,80 @@
+ 	atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_ISR);
+ }
+ 
++static void xlcdc_atomic_disable(struct atmel_hlcdc_plane *plane,
++				 struct atmel_hlcdc_dc *dc)
++{
++	/* Disable interrupts */
++	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_XLCDC_LAYER_IDR,
++				    0xffffffff);
++
++	/* Disable the layer */
++	atmel_hlcdc_layer_write_reg(&plane->layer,
++				    ATMEL_XLCDC_LAYER_ENR, 0);
++
++	/*
++	 * Updating XLCDC_xxxCFGx, XLCDC_xxxFBA and XLCDC_xxxEN,
++	 * (where xxx indicates each layer) requires writing one to the
++	 * Update Attribute field for each layer in LCDC_ATTRE register for SAM9X7.
++	 */
++	regmap_write(dc->hlcdc->regmap, ATMEL_XLCDC_ATTRE, ATMEL_XLCDC_BASE_UPDATE |
++		     ATMEL_XLCDC_OVR1_UPDATE | ATMEL_XLCDC_OVR3_UPDATE |
++		     ATMEL_XLCDC_HEO_UPDATE);
++
++	/* Clear all pending interrupts */
++	atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_XLCDC_LAYER_ISR);
++}
++
++static void atmel_hlcdc_plane_atomic_disable(struct drm_plane *p,
++					     struct drm_atomic_state *state)
++{
++	struct atmel_hlcdc_plane *plane = drm_plane_to_atmel_hlcdc_plane(p);
++	struct atmel_hlcdc_dc *dc = plane->base.dev->dev_private;
++
++	dc->desc->ops->lcdc_atomic_disable(plane, dc);
++}
++
++static void hlcdc_atomic_update(struct atmel_hlcdc_plane *plane,
++				struct atmel_hlcdc_dc *dc)
++{
++	u32 sr;
++
++	/* Enable the overrun interrupts. */
++	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_HLCDC_LAYER_IER,
++				    ATMEL_HLCDC_LAYER_OVR_IRQ(0) |
++				    ATMEL_HLCDC_LAYER_OVR_IRQ(1) |
++				    ATMEL_HLCDC_LAYER_OVR_IRQ(2));
++
++	/* Apply the new config at the next SOF event. */
++	sr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHSR);
++	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHER,
++				    ATMEL_HLCDC_LAYER_UPDATE |
++				    (sr & ATMEL_HLCDC_LAYER_EN ?
++				    ATMEL_HLCDC_LAYER_A2Q : ATMEL_HLCDC_LAYER_EN));
++}
++
++static void xlcdc_atomic_update(struct atmel_hlcdc_plane *plane,
++				struct atmel_hlcdc_dc *dc)
++{
++	/* Enable the overrun interrupts. */
++	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_XLCDC_LAYER_IER,
++				    ATMEL_XLCDC_LAYER_OVR_IRQ(0) |
++				    ATMEL_XLCDC_LAYER_OVR_IRQ(1) |
++				    ATMEL_XLCDC_LAYER_OVR_IRQ(2));
++
++	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_XLCDC_LAYER_ENR,
++				    ATMEL_XLCDC_LAYER_EN);
++
++	/*
++	 * Updating XLCDC_xxxCFGx, XLCDC_xxxFBA and XLCDC_xxxEN,
++	 * (where xxx indicates each layer) requires writing one to the
++	 * Update Attribute field for each layer in LCDC_ATTRE register for SAM9X7.
++	 */
++	regmap_write(dc->hlcdc->regmap, ATMEL_XLCDC_ATTRE, ATMEL_XLCDC_BASE_UPDATE |
++		     ATMEL_XLCDC_OVR1_UPDATE | ATMEL_XLCDC_OVR3_UPDATE |
++		     ATMEL_XLCDC_HEO_UPDATE);
++}
++
+ static void atmel_hlcdc_plane_atomic_update(struct drm_plane *p,
+ 					    struct drm_atomic_state *state)
+ {
+@@ -739,7 +936,7 @@
+ 	struct atmel_hlcdc_plane *plane = drm_plane_to_atmel_hlcdc_plane(p);
+ 	struct atmel_hlcdc_plane_state *hstate =
+ 			drm_plane_state_to_atmel_hlcdc_plane_state(new_s);
+-	u32 sr;
++	struct atmel_hlcdc_dc *dc = p->dev->dev_private;
+ 
+ 	if (!new_s->crtc || !new_s->fb)
+ 		return;
+@@ -750,29 +947,83 @@
+ 	}
+ 
+ 	atmel_hlcdc_plane_update_pos_and_size(plane, hstate);
+-	atmel_hlcdc_plane_update_general_settings(plane, hstate);
++	dc->desc->ops->lcdc_update_general_settings(plane, hstate);
+ 	atmel_hlcdc_plane_update_format(plane, hstate);
+ 	atmel_hlcdc_plane_update_clut(plane, hstate);
+ 	atmel_hlcdc_plane_update_buffers(plane, hstate);
+ 	atmel_hlcdc_plane_update_disc_area(plane, hstate);
+ 
+-	/* Enable the overrun interrupts. */
+-	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_HLCDC_LAYER_IER,
+-				    ATMEL_HLCDC_LAYER_OVR_IRQ(0) |
+-				    ATMEL_HLCDC_LAYER_OVR_IRQ(1) |
+-				    ATMEL_HLCDC_LAYER_OVR_IRQ(2));
++	dc->desc->ops->lcdc_atomic_update(plane, dc);
++}
+ 
+-	/* Apply the new config at the next SOF event. */
+-	sr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHSR);
+-	atmel_hlcdc_layer_write_reg(&plane->layer, ATMEL_HLCDC_LAYER_CHER,
+-			ATMEL_HLCDC_LAYER_UPDATE |
+-			(sr & ATMEL_HLCDC_LAYER_EN ?
+-			 ATMEL_HLCDC_LAYER_A2Q : ATMEL_HLCDC_LAYER_EN));
++static void hlcdc_csc_init(struct atmel_hlcdc_plane *plane,
++			   const struct atmel_hlcdc_layer_desc *desc)
++{
++	/*
++	 * TODO: declare a "yuv-to-rgb-conv-factors" property to let
++	 * userspace modify these factors (using a BLOB property ?).
++	 */
++	static const u32 hlcdc_csc_coeffs[] = {
++		0x4c900091,
++		0x7a5f5090,
++		0x40040890
++	};
++
++	for (int i = 0; i < ARRAY_SIZE(hlcdc_csc_coeffs); i++) {
++		atmel_hlcdc_layer_write_cfg(&plane->layer,
++					    desc->layout.csc + i,
++					    hlcdc_csc_coeffs[i]);
++	}
++}
++
++static void xlcdc_csc_init(struct atmel_hlcdc_plane *plane,
++			   const struct atmel_hlcdc_layer_desc *desc)
++{
++	/*
++	 * yuv-to-rgb-conv-factors are now defined from LCDC_HEOCFG16 to
++	 * LCDC_HEOCFG21 registers in SAM9X7.
++	 */
++	static const u32 xlcdc_csc_coeffs[] = {
++		0x00000488,
++		0x00000648,
++		0x1EA00480,
++		0x00001D28,
++		0x08100480,
++		0x00000000,
++		0x00000007
++	};
++
++	for (int i = 0; i < ARRAY_SIZE(xlcdc_csc_coeffs); i++) {
++		atmel_hlcdc_layer_write_cfg(&plane->layer,
++					    desc->layout.csc + i,
++					    xlcdc_csc_coeffs[i]);
++	}
++
++	if (desc->layout.vxs_config && desc->layout.hxs_config) {
++		/*
++		 * Updating vxs.config and hxs.config fixes the
++		 * Green Color Issue in SAM9X7 EGT Video Player App
++		 */
++		atmel_hlcdc_layer_write_cfg(&plane->layer,
++					    desc->layout.vxs_config,
++					    ATMEL_XLCDC_LAYER_VXSYCFG_ONE |
++					    ATMEL_XLCDC_LAYER_VXSYTAP2_ENABLE |
++					    ATMEL_XLCDC_LAYER_VXSCCFG_ONE |
++					    ATMEL_XLCDC_LAYER_VXSCTAP2_ENABLE);
++
++		atmel_hlcdc_layer_write_cfg(&plane->layer,
++					    desc->layout.hxs_config,
++					    ATMEL_XLCDC_LAYER_HXSYCFG_ONE |
++					    ATMEL_XLCDC_LAYER_HXSYTAP2_ENABLE |
++					    ATMEL_XLCDC_LAYER_HXSCCFG_ONE |
++					    ATMEL_XLCDC_LAYER_HXSCTAP2_ENABLE);
++	}
+ }
+ 
+ static int atmel_hlcdc_plane_init_properties(struct atmel_hlcdc_plane *plane)
+ {
+ 	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	struct atmel_hlcdc_dc *dc = plane->base.dev->dev_private;
+ 
+ 	if (desc->type == ATMEL_HLCDC_OVERLAY_LAYER ||
+ 	    desc->type == ATMEL_HLCDC_CURSOR_LAYER) {
+@@ -796,31 +1047,16 @@
+ 			return ret;
+ 	}
+ 
+-	if (desc->layout.csc) {
+-		/*
+-		 * TODO: decare a "yuv-to-rgb-conv-factors" property to let
+-		 * userspace modify these factors (using a BLOB property ?).
+-		 */
+-		atmel_hlcdc_layer_write_cfg(&plane->layer,
+-					    desc->layout.csc,
+-					    0x4c900091);
+-		atmel_hlcdc_layer_write_cfg(&plane->layer,
+-					    desc->layout.csc + 1,
+-					    0x7a5f5090);
+-		atmel_hlcdc_layer_write_cfg(&plane->layer,
+-					    desc->layout.csc + 2,
+-					    0x40040890);
+-	}
++	if (desc->layout.csc)
++		dc->desc->ops->lcdc_csc_init(plane, desc);
+ 
+ 	return 0;
+ }
+ 
+-void atmel_hlcdc_plane_irq(struct atmel_hlcdc_plane *plane)
++static void hlcdc_irq_dbg(struct atmel_hlcdc_plane *plane,
++			  const struct atmel_hlcdc_layer_desc *desc)
+ {
+-	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
+-	u32 isr;
+-
+-	isr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_ISR);
++	u32 isr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_HLCDC_LAYER_ISR);
+ 
+ 	/*
+ 	 * There's not much we can do in case of overrun except informing
+@@ -834,6 +1070,51 @@
+ 			desc->name);
+ }
+ 
++static void xlcdc_irq_dbg(struct atmel_hlcdc_plane *plane,
++			  const struct atmel_hlcdc_layer_desc *desc)
++{
++	u32 isr = atmel_hlcdc_layer_read_reg(&plane->layer, ATMEL_XLCDC_LAYER_ISR);
++
++	/*
++	 * There's not much we can do in case of overrun except informing
++	 * the user. However, we are in interrupt context here, hence the
++	 * use of dev_dbg().
++	 */
++	if (isr &
++	    (ATMEL_XLCDC_LAYER_OVR_IRQ(0) | ATMEL_XLCDC_LAYER_OVR_IRQ(1) |
++	     ATMEL_XLCDC_LAYER_OVR_IRQ(2)))
++		dev_dbg(plane->base.dev->dev, "overrun on plane %s\n",
++			desc->name);
++}
++
++void atmel_hlcdc_plane_irq(struct atmel_hlcdc_plane *plane)
++{
++	const struct atmel_hlcdc_layer_desc *desc = plane->layer.desc;
++	struct atmel_hlcdc_dc *dc = plane->base.dev->dev_private;
++
++	dc->desc->ops->lcdc_irq_dbg(plane, desc);
++}
++
++const struct atmel_lcdc_dc_ops atmel_hlcdc_ops = {
++	.plane_setup_scaler = atmel_hlcdc_plane_setup_scaler,
++	.update_lcdc_buffers = update_hlcdc_buffers,
++	.lcdc_atomic_disable = hlcdc_atomic_disable,
++	.lcdc_update_general_settings = atmel_hlcdc_plane_update_general_settings,
++	.lcdc_atomic_update = hlcdc_atomic_update,
++	.lcdc_csc_init = hlcdc_csc_init,
++	.lcdc_irq_dbg = hlcdc_irq_dbg,
++};
++
++const struct atmel_lcdc_dc_ops atmel_xlcdc_ops = {
++	.plane_setup_scaler = atmel_xlcdc_plane_setup_scaler,
++	.update_lcdc_buffers = update_xlcdc_buffers,
++	.lcdc_atomic_disable = xlcdc_atomic_disable,
++	.lcdc_update_general_settings = atmel_xlcdc_plane_update_general_settings,
++	.lcdc_atomic_update = xlcdc_atomic_update,
++	.lcdc_csc_init = xlcdc_csc_init,
++	.lcdc_irq_dbg = xlcdc_irq_dbg,
++};
++
+ static const struct drm_plane_helper_funcs atmel_hlcdc_layer_plane_helper_funcs = {
+ 	.atomic_check = atmel_hlcdc_plane_atomic_check,
+ 	.atomic_update = atmel_hlcdc_plane_atomic_update,
+--- linux-6.6.51/drivers/gpu/drm/bridge/Kconfig	2024-12-05 13:07:43.727265800 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/bridge/Kconfig	2024-12-04 16:41:24.309927300 +0900
+@@ -173,6 +173,21 @@
+ 	  to DP++. This is used with the i.MX6 imx-ldb
+ 	  driver. You are likely to say N here.
+ 
++config DRM_MICROCHIP_LVDS_SERIALIZER
++	tristate "Microchip LVDS serailzer support"
++	depends on OF
++	depends on DRM_ATMEL_HLCDC
++	help
++	  Support for Microchip's LVDS serializer.
++
++config DRM_MICROCHIP_DW_MIPI_DSI
++	tristate "Microchip specific extensions for Synopsys DW MIPI DSI"
++	depends on DRM_ATMEL_HLCDC
++	select DRM_DW_MIPI_DSI
++	help
++	  This selects support for Microchip's SoC specific extensions
++	  for the Synopsys DesignWare dsi driver.
++
+ config DRM_NWL_MIPI_DSI
+ 	tristate "Northwest Logic MIPI DSI Host controller"
+ 	depends on DRM
+--- linux-6.6.51/drivers/gpu/drm/bridge/Makefile	2024-12-05 13:07:43.727265800 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/bridge/Makefile	2024-12-04 16:41:24.309927300 +0900
+@@ -11,6 +11,8 @@
+ obj-$(CONFIG_DRM_LONTIUM_LT9611UXC) += lontium-lt9611uxc.o
+ obj-$(CONFIG_DRM_LVDS_CODEC) += lvds-codec.o
+ obj-$(CONFIG_DRM_MEGACHIPS_STDPXXXX_GE_B850V3_FW) += megachips-stdpxxxx-ge-b850v3-fw.o
++obj-$(CONFIG_DRM_MICROCHIP_LVDS_SERIALIZER) += microchip-lvds.o
++obj-$(CONFIG_DRM_MICROCHIP_DW_MIPI_DSI) += dw-mipi-dsi-mchp.o
+ obj-$(CONFIG_DRM_NXP_PTN3460) += nxp-ptn3460.o
+ obj-$(CONFIG_DRM_PARADE_PS8622) += parade-ps8622.o
+ obj-$(CONFIG_DRM_PARADE_PS8640) += parade-ps8640.o
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/bridge/dw-mipi-dsi-mchp.c	2024-12-04 16:41:24.324887300 +0900
+@@ -0,0 +1,563 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (C) 2024 Microchip Technology Inc. and its subsidiaries
++ *
++ * Author: Manikandan Muralidharan <manikandan.m@microchip.com>
++ *
++ */
++
++#include <drm/bridge/dw_mipi_dsi.h>
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_print.h>
++#include <linux/bits.h>
++#include <linux/clk.h>
++#include <linux/io.h>
++#include <linux/mfd/syscon.h>
++#include <linux/mod_devicetable.h>
++#include <linux/of_device.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++
++#define DSI_PLL_REF_CLK			24000000
++
++#define DSI_PWR_UP			0x04
++#define HOST_RESET			BIT(0)
++#define HOST_PWRUP			0
++
++#define DSI_PHY_RSTZ			0xa0
++#define PHY_SHUTDOWNZ			0
++
++#define DSI_PHY_TST_CTRL0		0xb4
++#define PHY_TESTCLK			BIT(1)
++#define PHY_UNTESTCLK			0
++#define PHY_TESTCLR			BIT(0)
++#define PHY_UNTESTCLR			0
++
++#define DSI_PHY_TST_CTRL1		0xb8
++#define PHY_TESTEN			BIT(16)
++#define PHY_UNTESTEN			0
++#define PHY_TESTDOUT(n)			(((n) & 0xff) << 8)
++#define PHY_TESTDIN(n)			(((n) & 0xff) << 0)
++
++#define BYPASS_VCO_RANGE		BIT(7)
++#define VCO_RANGE_CON_SEL(val)		(((val) & 0x7) << 3)
++#define VCO_IN_CAP_CON_LOW		BIT(1)
++
++#define CP_CURRENT_0			0x2
++#define CP_CURRENT_1			0x4
++#define CP_CURRENT_2			0x5
++#define CP_CURRENT_3			0x6
++#define CP_CURRENT_4			0x7
++#define CP_CURRENT_5			0x8
++#define CP_CURRENT_6			0xc
++#define CP_CURRENT_SEL(val)		((val) & 0xf)
++#define CP_PROGRAM_EN			BIT(7)
++
++#define LPF_RESISTORS_18KOHM		0x0
++#define LPF_RESISTORS_15_6KOHM		0x1
++#define LPF_RESISTORS_15KOHM		0x2
++#define LPF_RESISTORS_14_4KOHM		0x4
++#define LPF_RESISTORS_12_8KOHM		0x8
++#define LPF_RESISTORS_11_4KOHM		0x10
++#define LPF_RESISTORS_10_5KOHM		0x20
++#define LPF_PROGRAM_EN			BIT(6)
++#define LPF_RESISTORS_SEL(val)		((val) & 0x3f)
++
++#define HSFREQRANGE_SEL(val)		(((val) & 0x3f) << 1)
++
++#define INPUT_DIVIDER(val)		(((val) - 1) & 0x7f)
++#define LOW_PROGRAM_EN			0
++#define HIGH_PROGRAM_EN			BIT(7)
++#define LOOP_DIV_LOW_SEL(val)		(((val) - 1) & 0x1f)
++#define LOOP_DIV_HIGH_SEL(val)		((((val) - 1) >> 5) & 0xf)
++#define PLL_LOOP_DIV_EN			BIT(5)
++#define PLL_INPUT_DIV_EN		BIT(4)
++
++#define PLL_BIAS_CUR_SEL_CAP_VCO_CONTROL		0x10
++#define PLL_CP_CONTROL_PLL_LOCK_BYPASS			0x11
++#define PLL_LPF_AND_CP_CONTROL				0x12
++#define PLL_INPUT_DIVIDER_RATIO				0x17
++#define PLL_LOOP_DIVIDER_RATIO				0x18
++#define PLL_INPUT_AND_LOOP_DIVIDER_RATIOS_CONTROL	0x19
++
++#define SFR_ISS_CFG			0x240
++#define ISS_CFG_DSI_MODE		1
++
++struct dw_mipi_dsi_mchp_chip_data {
++	unsigned int max_data_lanes;
++	struct dw_mipi_dsi_phy_ops *phy_ops;
++	bool has_sfr;
++};
++
++struct dw_mipi_dsi_mchp {
++	struct device *dev;
++	void __iomem *base;
++	struct dw_mipi_dsi_plat_data pdata;
++	struct dw_mipi_dsi *dsi;
++
++	/* needed for PLL config */
++	unsigned int lane_mbps;
++	u16 input_div;
++	u16 feedback_div;
++	u32 format;
++
++	struct clk *pclk;
++	struct clk *pllref_clk;
++};
++
++struct dphy_pll_parameter_map {
++	unsigned int max_mbps;
++	u8 hsfreqrange;
++	u8 icpctrl;
++	u8 lpfctrl;
++};
++
++static const struct dphy_pll_parameter_map dppa_map[] = {
++	{  89, 0x00, CP_CURRENT_1, LPF_RESISTORS_11_4KOHM },
++	{  99, 0x20, CP_CURRENT_1, LPF_RESISTORS_11_4KOHM },
++	{ 109, 0x40, CP_CURRENT_1, LPF_RESISTORS_11_4KOHM },
++	{ 129, 0x02, CP_CURRENT_5, LPF_RESISTORS_12_8KOHM },
++	{ 139, 0x22, CP_CURRENT_5, LPF_RESISTORS_12_8KOHM },
++	{ 149, 0x42, CP_CURRENT_5, LPF_RESISTORS_12_8KOHM },
++	{ 169, 0x04, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 179, 0x24, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 199, 0x44, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 219, 0x06, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 239, 0x26, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 249, 0x46, CP_CURRENT_6, LPF_RESISTORS_12_8KOHM },
++	{ 269, 0x08, CP_CURRENT_0, LPF_RESISTORS_12_8KOHM },
++	{ 299, 0x28, CP_CURRENT_0, LPF_RESISTORS_12_8KOHM },
++	{ 329, 0x0a, CP_CURRENT_2, LPF_RESISTORS_12_8KOHM },
++	{ 359, 0x2a, CP_CURRENT_2, LPF_RESISTORS_12_8KOHM },
++	{ 399, 0x4a, CP_CURRENT_2, LPF_RESISTORS_12_8KOHM },
++	{ 449, 0x0C, CP_CURRENT_2, LPF_RESISTORS_15_6KOHM },
++	{ 499, 0x2c, CP_CURRENT_2, LPF_RESISTORS_15_6KOHM },
++	{ 549, 0x0e, CP_CURRENT_3, LPF_RESISTORS_11_4KOHM },
++	{ 599, 0x2e, CP_CURRENT_3, LPF_RESISTORS_11_4KOHM },
++	{ 649, 0x10, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 699, 0x30, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 749, 0x12, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 799, 0x32, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 849, 0x52, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 899, 0x72, CP_CURRENT_3, LPF_RESISTORS_14_4KOHM },
++	{ 949, 0x14, CP_CURRENT_4, LPF_RESISTORS_11_4KOHM },
++	{1000, 0x34, CP_CURRENT_4, LPF_RESISTORS_11_4KOHM }
++};
++
++struct hstt {
++	unsigned int maxfreq;
++	struct dw_mipi_dsi_dphy_timing timing;
++};
++
++#define HSTT(_maxfreq, _c_lp2hs, _c_hs2lp, _d_lp2hs, _d_hs2lp)	\
++{					\
++	.maxfreq = _maxfreq,		\
++	.timing = {			\
++		.clk_lp2hs = _c_lp2hs,	\
++		.clk_hs2lp = _c_hs2lp,	\
++		.data_lp2hs = _d_lp2hs,	\
++		.data_hs2lp = _d_hs2lp,	\
++	}				\
++}
++
++struct hstt hstt_table[] = {
++	HSTT(90,  32, 20,  26, 13),
++	HSTT(100,  35, 23,  28, 14),
++	HSTT(110,  32, 22,  26, 13),
++	HSTT(130,  31, 20,  27, 13),
++	HSTT(140,  33, 22,  26, 14),
++	HSTT(150,  33, 21,  26, 14),
++	HSTT(170,  32, 20,  27, 13),
++	HSTT(180,  36, 23,  30, 15),
++	HSTT(200,  40, 22,  33, 15),
++	HSTT(220,  40, 22,  33, 15),
++	HSTT(240,  44, 24,  36, 16),
++	HSTT(250,  48, 24,  38, 17),
++	HSTT(270,  48, 24,  38, 17),
++	HSTT(300,  50, 27,  41, 18),
++	HSTT(330,  56, 28,  45, 18),
++	HSTT(360,  59, 28,  48, 19),
++	HSTT(400,  61, 30,  50, 20),
++	HSTT(450,  67, 31,  55, 21),
++	HSTT(500,  73, 31,  59, 22),
++	HSTT(550,  79, 36,  63, 24),
++	HSTT(600,  83, 37,  68, 25),
++	HSTT(650,  90, 38,  73, 27),
++	HSTT(700,  95, 40,  77, 28),
++	HSTT(750, 102, 40,  84, 28),
++	HSTT(800, 106, 42,  87, 30),
++	HSTT(850, 113, 44,  93, 31),
++	HSTT(900, 118, 47,  98, 32),
++	HSTT(950, 124, 47, 102, 34),
++	HSTT(1000, 130, 49, 107, 35),
++};
++
++static int max_mbps_to_parameter(unsigned int max_mbps)
++{
++	int index;
++
++	for (index = 0; index < ARRAY_SIZE(dppa_map); index++)
++		if (dppa_map[index].max_mbps >= max_mbps)
++			return index;
++
++	return -EINVAL;
++}
++
++static inline void dsi_write(struct dw_mipi_dsi_mchp *dsi, u32 reg, u32 val)
++{
++	writel(val, dsi->base + reg);
++}
++
++static inline u32 dsi_read(struct dw_mipi_dsi_mchp *dsi, u32 reg)
++{
++	return readl(dsi->base + reg);
++}
++
++static void dw_mipi_dsi_phy_write(struct dw_mipi_dsi_mchp *dsi,
++				  u8 test_code,
++				  u8 test_data)
++{
++	/*
++	 * With the falling edge on TESTCLK, the TESTDIN[7:0] signal content
++	 * is latched internally as the current test code. Test data is
++	 * programmed internally by rising edge on TESTCLK.
++	 */
++
++	/* General DPHY control operation */
++
++	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_TESTCLK | PHY_UNTESTCLR);
++	dsi_write(dsi, DSI_PHY_TST_CTRL1, PHY_TESTEN | PHY_TESTDOUT(1) |
++						PHY_TESTDIN(test_code));
++	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_UNTESTCLK | PHY_UNTESTCLR);
++	dsi_write(dsi, DSI_PHY_TST_CTRL1, PHY_UNTESTEN | PHY_TESTDOUT(0) |
++						PHY_TESTDIN(test_data));
++	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_TESTCLK | PHY_UNTESTCLR);
++	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_UNTESTCLK | PHY_UNTESTCLR);
++}
++
++static int dw_mipi_dsi_mchp_init(void *priv_data)
++{
++	struct dw_mipi_dsi_mchp *dsi = priv_data;
++	int ret, index, vco;
++
++	/*
++	 * Get vco from frequency(lane_mbps)
++	 * vco	frequency table
++	 * 000 - between   80 and  200 MHz
++	 * 001 - between  200 and  300 MHz
++	 * 010 - between  300 and  500 MHz
++	 * 011 - between  500 and  700 MHz
++	 * 100 - between  700 and  900 MHz
++	 * 101 - between  900 and 1000 MHz
++	 */
++	vco = (dsi->lane_mbps < 200) ? 0 : (dsi->lane_mbps + 100) / 200;
++
++	index = max_mbps_to_parameter(dsi->lane_mbps);
++	if (index < 0) {
++		dev_err(dsi->dev,
++			"failed to get parameter for %dmbps clock\n",
++			dsi->lane_mbps);
++		return index;
++	}
++
++	/* D-PHY in Shutdown mode */
++	dsi_write(dsi, DSI_PHY_RSTZ, PHY_SHUTDOWNZ);
++
++	dw_mipi_dsi_phy_write(dsi, PLL_BIAS_CUR_SEL_CAP_VCO_CONTROL,
++			      BYPASS_VCO_RANGE |
++			      VCO_RANGE_CON_SEL(vco) |
++			      VCO_IN_CAP_CON_LOW);
++
++	dw_mipi_dsi_phy_write(dsi, PLL_CP_CONTROL_PLL_LOCK_BYPASS,
++			      CP_CURRENT_SEL(dppa_map[index].icpctrl));
++
++	dw_mipi_dsi_phy_write(dsi, PLL_LPF_AND_CP_CONTROL,
++			      CP_PROGRAM_EN | LPF_PROGRAM_EN |
++			      LPF_RESISTORS_SEL(dppa_map[index].lpfctrl));
++
++	dw_mipi_dsi_phy_write(dsi, PLL_INPUT_AND_LOOP_DIVIDER_RATIOS_CONTROL,
++			      PLL_LOOP_DIV_EN | PLL_INPUT_DIV_EN);
++
++	dw_mipi_dsi_phy_write(dsi, PLL_INPUT_DIVIDER_RATIO,
++			      INPUT_DIVIDER(dsi->input_div));
++
++	dw_mipi_dsi_phy_write(dsi, PLL_LOOP_DIVIDER_RATIO,
++			      LOOP_DIV_LOW_SEL(dsi->feedback_div) |
++			      LOW_PROGRAM_EN);
++
++	dw_mipi_dsi_phy_write(dsi, PLL_LOOP_DIVIDER_RATIO,
++			      LOOP_DIV_HIGH_SEL(dsi->feedback_div) |
++			      HIGH_PROGRAM_EN);
++
++	return ret;
++}
++
++static int dw_mipi_dsi_mchp_get_lane_mbps(void *priv_data,
++					  const struct drm_display_mode *mode,
++					  unsigned long mode_flags, u32 lanes,
++					  u32 format, unsigned int *lane_mbps)
++{
++	struct dw_mipi_dsi_mchp *dsi = priv_data;
++	unsigned int mpclk, target_mbps, desired_mbps;
++	unsigned int max_mbps = dppa_map[ARRAY_SIZE(dppa_map) - 1].max_mbps;
++	unsigned long best_freq, fvco_min, fvco_max, fin, fout;
++	unsigned long min_delta = ULONG_MAX, delta;
++	int bpp, min_prediv, max_prediv, _fbdiv, best_fbdiv, _prediv, best_prediv;
++	u64 freq_factor;
++
++	dsi->format = format;
++	bpp = mipi_dsi_pixel_format_to_bpp(dsi->format);
++	if (bpp < 0) {
++		dev_err(dsi->dev,
++			"failed to get bpp for pixel format %d\n",
++			dsi->format);
++		return bpp;
++	}
++
++	mpclk = DIV_ROUND_UP(mode->clock, MSEC_PER_SEC);
++	if (mpclk) {
++		/* take 1/0.8, since mbps must be bigger than bandwidth of RGB */
++		desired_mbps = mpclk * (bpp / lanes) * 10 / 8;
++		if (desired_mbps < max_mbps) {
++			target_mbps = desired_mbps;
++		} else {
++			dev_err(dsi->dev,
++				"DPHY clock frequency is out of range\n");
++			return -ERANGE;
++		}
++	}
++
++	fin = clk_get_rate(dsi->pllref_clk);
++	fout = target_mbps * USEC_PER_SEC;
++
++	/* constraint: 5Mhz <= Fref / N <= 40MHz */
++	min_prediv = DIV_ROUND_UP(fin, 40 * USEC_PER_SEC);
++	max_prediv = fin / (5 * USEC_PER_SEC);
++
++	/* constraint: 80MHz <= Fvco <= 1000Mhz */
++	fvco_min = 80 * USEC_PER_SEC;
++	fvco_max = 1000 * USEC_PER_SEC;
++
++	best_freq = 0;
++	for (_prediv = min_prediv; _prediv <= max_prediv; _prediv++) {
++		/* Fvco = Fref * M / N */
++		freq_factor = (uint64_t)fout * _prediv;
++		do_div(freq_factor, fin);
++		_fbdiv = freq_factor;
++		/*
++		 * Due to the use of a "by 2 pre-scaler," the range of the
++		 * feedback multiplication value M is limited to even division
++		 * numbers, and m must be greater than 6, not bigger than 512.
++		 */
++		if (_fbdiv < 6 || _fbdiv > 512)
++			continue;
++
++		_fbdiv += _fbdiv % 2;
++
++		freq_factor = (uint64_t)_fbdiv * fin;
++		do_div(freq_factor, _prediv);
++		if (freq_factor < fvco_min || freq_factor > fvco_max)
++			continue;
++
++		delta = abs(fout - freq_factor);
++		if (delta < min_delta) {
++			best_prediv = _prediv;
++			best_fbdiv = _fbdiv;
++			min_delta = delta;
++			best_freq = freq_factor;
++		}
++	}
++
++	if (best_freq) {
++		dsi->lane_mbps = DIV_ROUND_UP(best_freq, USEC_PER_SEC);
++		*lane_mbps = dsi->lane_mbps;
++		dsi->input_div = best_prediv;
++		dsi->feedback_div = best_fbdiv;
++	} else {
++		dev_err(dsi->dev, "Can not find best_freq for DPHY\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
++static int dw_mipi_dsi_mchp_get_timing(void *priv_data, unsigned int lane_mbps,
++				       struct dw_mipi_dsi_dphy_timing *timing)
++{
++	int index;
++
++	for (index = 0; index < ARRAY_SIZE(hstt_table); index++)
++		if (lane_mbps < hstt_table[index].maxfreq)
++			break;
++
++	if (index == ARRAY_SIZE(hstt_table))
++		index--;
++
++	*timing = hstt_table[index].timing;
++
++	return 0;
++}
++
++static void dw_mipi_dsi_mchp_power_on(void *priv_data)
++{
++	struct dw_mipi_dsi_mchp *dsi = priv_data;
++
++	/* Enable the DSI wrapper */
++	dsi_write(dsi, DSI_PWR_UP, HOST_PWRUP);
++}
++
++static void dw_mipi_dsi_mchp_power_off(void *priv_data)
++{
++	struct dw_mipi_dsi_mchp *dsi = priv_data;
++
++	/* Disable the DSI wrapper */
++	dsi_write(dsi, DSI_PWR_UP, HOST_RESET);
++}
++
++struct dw_mipi_dsi_phy_ops dw_mipi_dsi_mchp_phy_ops = {
++	.init = dw_mipi_dsi_mchp_init,
++	.power_on = dw_mipi_dsi_mchp_power_on,
++	.power_off = dw_mipi_dsi_mchp_power_off,
++	.get_lane_mbps = dw_mipi_dsi_mchp_get_lane_mbps,
++	.get_timing = dw_mipi_dsi_mchp_get_timing,
++};
++
++static int dw_mipi_dsi_mchp_probe(struct platform_device *pdev)
++{
++	struct dw_mipi_dsi_mchp *dsi;
++	struct resource *res;
++	struct regmap *sfr;
++	const struct dw_mipi_dsi_mchp_chip_data *cdata;
++	int ret;
++
++	dsi = devm_kzalloc(&pdev->dev, sizeof(*dsi), GFP_KERNEL);
++	if (!dsi)
++		return -ENOMEM;
++
++	dsi->dev = &pdev->dev;
++	cdata = of_device_get_match_data(dsi->dev);
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	dsi->base = devm_ioremap_resource(&pdev->dev, res);
++	if (IS_ERR(dsi->base)) {
++		ret = PTR_ERR(dsi->base);
++		dev_err(dsi->dev, "Unable to get DSI Base address: %d\n", ret);
++		return ret;
++	}
++
++	dsi->pclk = devm_clk_get(&pdev->dev, "pclk");
++	if (IS_ERR(dsi->pclk)) {
++		ret = PTR_ERR(dsi->pclk);
++		dev_err(dsi->dev, "Unable to get pclk: %d\n", ret);
++		return ret;
++	}
++
++	dsi->pllref_clk = devm_clk_get(&pdev->dev, "refclk");
++	if (IS_ERR(dsi->pllref_clk)) {
++		ret = PTR_ERR(dsi->pllref_clk);
++		dev_err(dsi->dev, "Unable to get DSI PHY PLL reference clock: %d\n",
++			ret);
++		return ret;
++	}
++
++	clk_set_rate(dsi->pllref_clk, DSI_PLL_REF_CLK);
++	if (clk_get_rate(dsi->pllref_clk) != DSI_PLL_REF_CLK) {
++		dev_err(dsi->dev, "Failed to set DSI PHY PLL reference clock to: %d\n",
++			DSI_PLL_REF_CLK);
++		return -1;
++	}
++
++	ret = clk_prepare_enable(dsi->pllref_clk);
++	if (ret) {
++		dev_err(dsi->dev, "Failed to enable DSI PHY PLL reference clock: %d\n",
++			ret);
++		return ret;
++	}
++
++	if (cdata->has_sfr) {
++		sfr = syscon_regmap_lookup_by_phandle(pdev->dev.of_node, "microchip,sfr");
++		if (IS_ERR_OR_NULL(sfr)) {
++			ret = PTR_ERR(sfr);
++			dev_err(dsi->dev, "Failed to get handle on Special Function Register: %d\n",
++				ret);
++			goto err_dsi_probe;
++		}
++
++		/* Select DSI in SFR's ISS Configuration Register */
++		ret = regmap_write(sfr, SFR_ISS_CFG, ISS_CFG_DSI_MODE);
++		if (ret) {
++			dev_err(dsi->dev, "Failed to enable DSI in SFR ISS configuration register: %d\n",
++				ret);
++			goto err_dsi_probe;
++		}
++	}
++	dsi->pdata.base = dsi->base;
++	dsi->pdata.max_data_lanes = cdata->max_data_lanes;
++	dsi->pdata.phy_ops = cdata->phy_ops;
++	dsi->pdata.priv_data = dsi;
++	platform_set_drvdata(pdev, dsi);
++
++	/* call synopsis probe */
++	dsi->dsi = dw_mipi_dsi_probe(pdev, &dsi->pdata);
++	if (IS_ERR(dsi->dsi)) {
++		ret = PTR_ERR(dsi->dsi);
++		dev_err(dsi->dev, "Failed to initialize mipi dsi host: %d\n", ret);
++		goto err_dsi_probe;
++	}
++
++	return 0;
++
++err_dsi_probe:
++	clk_disable_unprepare(dsi->pllref_clk);
++
++	return ret;
++}
++
++static int dw_mipi_dsi_mchp_remove(struct platform_device *pdev)
++{
++	struct dw_mipi_dsi_mchp *dsi = platform_get_drvdata(pdev);
++
++	dw_mipi_dsi_remove(dsi->dsi);
++	clk_disable_unprepare(dsi->pllref_clk);
++
++	return 0;
++}
++
++static const struct dw_mipi_dsi_mchp_chip_data sam9x75_chip_data = {
++	.max_data_lanes = 4,
++	.phy_ops = &dw_mipi_dsi_mchp_phy_ops,
++	.has_sfr = true,
++};
++
++static const struct dw_mipi_dsi_mchp_chip_data sama7d65_chip_data = {
++	.max_data_lanes = 4,
++	.phy_ops = &dw_mipi_dsi_mchp_phy_ops,
++	.has_sfr = false,
++};
++
++static const struct of_device_id dw_mipi_dsi_mchp_dt_ids[] = {
++	{
++	 .compatible	= "microchip,sam9x75-mipi-dsi",
++	 .data		= &sam9x75_chip_data,
++	},
++	{
++	 .compatible    = "microchip,sama7d65-mipi-dsi",
++	 .data		= &sama7d65_chip_data,
++	},
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, dw_mipi_dsi_mchp_dt_ids);
++
++struct platform_driver dw_mipi_dsi_mchp_driver = {
++	.probe		= dw_mipi_dsi_mchp_probe,
++	.remove		= dw_mipi_dsi_mchp_remove,
++	.driver		= {
++		.of_match_table = dw_mipi_dsi_mchp_dt_ids,
++		.name		= "dw-mipi-dsi-mchp",
++	},
++};
++module_platform_driver(dw_mipi_dsi_mchp_driver);
++
++MODULE_AUTHOR("Manikandan Muralidharan <manikandan.m@microchip.com>");
++MODULE_DESCRIPTION("Microchip DW MIPI DSI Host Controller Driver");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/bridge/microchip-lvds.c	2024-12-04 16:41:24.331868700 +0900
+@@ -0,0 +1,239 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (C) 2023 Microchip Technology Inc. and its subsidiaries
++ *
++ * Author: Manikandan Muralidharan <manikandan.m@microchip.com>
++ * Author: Dharma Balasubiramani <dharma.b@microchip.com>
++ *
++ */
++
++#include <linux/clk.h>
++#include <linux/component.h>
++#include <linux/delay.h>
++#include <linux/jiffies.h>
++#include <linux/mfd/syscon.h>
++#include <linux/of_graph.h>
++#include <linux/pinctrl/devinfo.h>
++#include <linux/phy/phy.h>
++#include <linux/platform_device.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/reset.h>
++
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_bridge.h>
++#include <drm/drm_of.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_print.h>
++#include <drm/drm_probe_helper.h>
++#include <drm/drm_simple_kms_helper.h>
++
++#define LVDS_POLL_TIMEOUT_MS 1000
++
++/* LVDSC register offsets */
++#define LVDSC_CR	0x00
++#define LVDSC_CFGR	0x04
++#define LVDSC_SR	0x0C
++#define LVDSC_WPMR	0xE4
++
++/* Bitfields in LVDSC_CR (Control Register) */
++#define LVDSC_CR_SER_EN	BIT(0)
++
++/* Bitfields in LVDSC_CFGR (Configuration Register) */
++#define LVDSC_CFGR_PIXSIZE_24BITS	0
++#define LVDSC_CFGR_DEN_POL_HIGH 	0
++#define LVDSC_CFGR_DC_UNBALANCED	0
++#define LVDSC_CFGR_MAPPING_JEIDA	BIT(6)
++
++/*Bitfields in LVDSC_SR */
++#define LVDSC_SR_CS	BIT(0)
++
++/* Bitfields in LVDSC_WPMR (Write Protection Mode Register) */
++#define LVDSC_WPMR_WPKEY_MASK	GENMASK(31, 8)
++#define LVDSC_WPMR_WPKEY_PSSWD	0x4C5644
++
++struct mchp_lvds {
++	struct device *dev;
++	void __iomem *regs;
++	struct clk *pclk;
++	int format; /* vesa or jeida format */
++	struct drm_panel *panel;
++	struct drm_bridge bridge;
++	struct drm_bridge *panel_bridge;
++};
++
++static inline struct mchp_lvds *bridge_to_lvds(struct drm_bridge *bridge)
++{
++	return container_of(bridge, struct mchp_lvds, bridge);
++}
++
++static inline u32 lvds_readl(struct mchp_lvds *lvds, u32 offset)
++{
++	return readl_relaxed(lvds->regs + offset);
++}
++
++static inline void lvds_writel(struct mchp_lvds *lvds, u32 offset, u32 val)
++{
++	writel_relaxed(val, lvds->regs + offset);
++}
++
++static void lvds_serialiser_on(struct mchp_lvds *lvds)
++{
++	unsigned long timeout = jiffies + msecs_to_jiffies(LVDS_POLL_TIMEOUT_MS);
++
++	/* The LVDSC registers can only be written if WPEN is cleared */
++	lvds_writel(lvds, LVDSC_WPMR, (LVDSC_WPMR_WPKEY_PSSWD &
++				LVDSC_WPMR_WPKEY_MASK));
++
++	/* Wait for the status of configuration registers to be changed */
++	while (lvds_readl(lvds, LVDSC_SR) & LVDSC_SR_CS) {
++		if (time_after(jiffies, timeout)) {
++			dev_err(lvds->dev, "%s: timeout error\n", __func__);
++			return;
++		}
++		usleep_range(1000, 2000);
++	}
++
++	/* Configure the LVDSC */
++	lvds_writel(lvds, LVDSC_CFGR, (LVDSC_CFGR_MAPPING_JEIDA |
++				LVDSC_CFGR_DC_UNBALANCED |
++				LVDSC_CFGR_DEN_POL_HIGH |
++				LVDSC_CFGR_PIXSIZE_24BITS));
++
++	/* Enable the LVDS serializer */
++	lvds_writel(lvds, LVDSC_CR, LVDSC_CR_SER_EN);
++}
++
++static int mchp_lvds_attach(struct drm_bridge *bridge,
++			    enum drm_bridge_attach_flags flags)
++{
++	struct mchp_lvds *lvds = bridge_to_lvds(bridge);
++
++	bridge->encoder->encoder_type = DRM_MODE_ENCODER_LVDS;
++
++	return drm_bridge_attach(bridge->encoder, lvds->panel_bridge,
++				 bridge, flags);
++}
++
++static void mchp_lvds_enable(struct drm_bridge *bridge)
++{
++	struct mchp_lvds *lvds = bridge_to_lvds(bridge);
++	int ret;
++
++	ret = clk_prepare_enable(lvds->pclk);
++	if (ret < 0) {
++		DRM_DEV_ERROR(lvds->dev, "failed to enable lvds pclk %d\n", ret);
++		return;
++	}
++
++	ret = pm_runtime_get_sync(lvds->dev);
++	if (ret < 0) {
++		DRM_DEV_ERROR(lvds->dev, "failed to get pm runtime: %d\n", ret);
++		clk_disable_unprepare(lvds->pclk);
++		return;
++	}
++
++	lvds_serialiser_on(lvds);
++}
++
++static void mchp_lvds_disable(struct drm_bridge *bridge)
++{
++	struct mchp_lvds *lvds = bridge_to_lvds(bridge);
++
++	pm_runtime_put(lvds->dev);
++	clk_disable_unprepare(lvds->pclk);
++}
++
++static const struct drm_bridge_funcs mchp_lvds_bridge_funcs = {
++	.attach = mchp_lvds_attach,
++	.enable = mchp_lvds_enable,
++	.disable = mchp_lvds_disable,
++};
++
++static int mchp_lvds_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct mchp_lvds *lvds;
++	struct resource *res;
++	struct device_node *port;
++
++	if (!dev->of_node)
++		return -ENODEV;
++
++	lvds = devm_kzalloc(&pdev->dev, sizeof(*lvds), GFP_KERNEL);
++	if (!lvds)
++		return -ENOMEM;
++
++	lvds->dev = dev;
++
++	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++	lvds->regs = devm_ioremap_resource(lvds->dev, res);
++	if (IS_ERR(lvds->regs))
++		return PTR_ERR(lvds->regs);
++
++	lvds->pclk = devm_clk_get(lvds->dev, "pclk");
++	if (IS_ERR(lvds->pclk)) {
++		DRM_DEV_ERROR(lvds->dev, "could not get pclk_lvds\n");
++		return PTR_ERR(lvds->pclk);
++	}
++
++	port = of_graph_get_remote_node(dev->of_node, 1, 0);
++	if (!port) {
++		DRM_DEV_ERROR(dev,
++			      "can't find port point, please init lvds panel port!\n");
++		return -EINVAL;
++	}
++
++	lvds->panel = of_drm_find_panel(port);
++	of_node_put(port);
++
++	if (IS_ERR(lvds->panel)) {
++		DRM_DEV_ERROR(dev, "failed to find panel node\n");
++		return -EPROBE_DEFER;
++	}
++
++	lvds->panel_bridge = devm_drm_panel_bridge_add(dev, lvds->panel);
++
++	if (IS_ERR(lvds->panel_bridge))
++		return PTR_ERR(lvds->panel_bridge);
++
++	lvds->bridge.of_node = dev->of_node;
++	lvds->bridge.type = DRM_MODE_CONNECTOR_LVDS;
++	lvds->bridge.funcs = &mchp_lvds_bridge_funcs;
++
++	dev_set_drvdata(dev, lvds);
++	pm_runtime_enable(dev);
++
++	drm_bridge_add(&lvds->bridge);
++
++	return 0;
++}
++
++static int mchp_lvds_remove(struct platform_device *pdev)
++{
++	pm_runtime_disable(&pdev->dev);
++
++	return 0;
++}
++
++static const struct of_device_id mchp_lvds_dt_ids[] = {
++	{ .compatible = "microchip,sam9x7-lvds" },
++	{ .compatible = "microchip,sama7d65-lvds" },
++	{ /* sentinel */ },
++};
++
++struct platform_driver mchp_lvds_driver = {
++	.probe = mchp_lvds_probe,
++	.remove = mchp_lvds_remove,
++	.driver = {
++		   .name = "microchip-lvds",
++		   .of_match_table = mchp_lvds_dt_ids,
++	},
++};
++module_platform_driver(mchp_lvds_driver);
++
++MODULE_AUTHOR("Manikandan Muralidharan <manikandan.m@microchip.com>");
++MODULE_AUTHOR("Dharma Balasubiramani <dharma.b@microchip.com>");
++MODULE_DESCRIPTION("Low Voltage Differential Signaling Controller Driver");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:microchip-lvds");
+--- linux-6.6.51/drivers/gpu/drm/drm_atomic_helper.c	2024-12-05 13:07:43.801068300 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/drm_atomic_helper.c	2024-12-04 16:41:24.378743200 +0900
+@@ -1625,7 +1625,42 @@
+ EXPORT_SYMBOL(drm_atomic_helper_wait_for_fences);
+ 
+ /**
+- * drm_atomic_helper_wait_for_vblanks - wait for vblank on CRTCs
++ * drm_atomic_helper_framebuffer_changed - check if framebuffer has changed
++ * @dev: DRM device
++ * @old_state: atomic state object with old state structures
++ * @crtc: DRM crtc
++ *
++ * Checks whether the framebuffer used for this CRTC changes as a result of
++ * the atomic update.  This is useful for drivers which cannot use
++ * drm_atomic_helper_wait_for_vblanks() and need to reimplement its
++ * functionality.
++ *
++ * Returns:
++ * true if the framebuffer changed.
++ */
++bool drm_atomic_helper_framebuffer_changed(struct drm_device *dev,
++					   struct drm_atomic_state *old_state,
++					   struct drm_crtc *crtc)
++{
++	struct drm_plane *plane;
++	struct drm_plane_state *old_plane_state;
++	int i;
++
++	for_each_old_plane_in_state(old_state, plane, old_plane_state, i) {
++		if (plane->state->crtc != crtc &&
++		    old_plane_state->crtc != crtc)
++			continue;
++
++		if (plane->state->fb != old_plane_state->fb)
++			return true;
++	}
++
++	return false;
++}
++EXPORT_SYMBOL(drm_atomic_helper_framebuffer_changed);
++
++/**
++ * drm_atomic_helper_wait_for_vblanks - wait for vblank on crtcs
+  * @dev: DRM device
+  * @old_state: atomic state object with old state structures
+  *
+@@ -1659,6 +1694,9 @@
+ 		if (!new_crtc_state->active)
+ 			continue;
+ 
++		if (!drm_atomic_helper_framebuffer_changed(dev,
++                                old_state, crtc))
++			continue;
+ 		ret = drm_crtc_vblank_get(crtc);
+ 		if (ret != 0)
+ 			continue;
+--- linux-6.6.51/drivers/gpu/drm/panel/panel-himax-hx8394.c	2024-12-05 13:07:44.891659000 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/panel/panel-himax-hx8394.c	2024-12-04 16:41:25.526672100 +0900
+@@ -52,6 +52,7 @@
+ #define HX8394_CMD_SETGIP1	  0xd5
+ #define HX8394_CMD_SETGIP2	  0xd6
+ #define HX8394_CMD_SETGPO	  0xd6
++#define HX8394_CMD_SETGIP3	  0xd8
+ #define HX8394_CMD_SETSCALING	  0xdd
+ #define HX8394_CMD_SETIDLE	  0xdf
+ #define HX8394_CMD_SETGAMMA	  0xe0
+@@ -203,6 +204,156 @@
+ 	.init_sequence = hsd060bhw4_init_sequence,
+ };
+ 
++static int mchp_ac40t08a_init_sequence(struct hx8394 *ctx)
++{
++	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
++
++	/* DCS commands do not seem to be sent correclty with out this delay */
++	msleep(20);
++
++	/* 5.19.8 SETEXTC: Set extension command (B9h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETEXTC,
++			       0xff, 0x83, 0x94);
++
++	/* 5.19.9 SETMIPI: Set MIPI control (BAh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETMIPI,
++			       0x63, 0x03, 0x68, 0x6b, 0xb2, 0xc0);
++
++	/* 5.19.2 SETPOWER: Set power (B1h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETPOWER,
++			       0x48, 0x12, 0x72, 0x09, 0x32, 0x54,
++			       0x71, 0x71, 0x57, 0x47);
++
++	/* 5.19.3 SETDISP: Set display related register (B2h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETDISP,
++			       0x00, 0x80, 0x64, 0x0c, 0x0d, 0x2f);
++
++	/* 5.19.4 SETCYC: Set display waveform cycles (B4h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETCYC,
++			       0x73, 0x74, 0x73, 0x74, 0x73, 0x74,
++			       0x01, 0x0C, 0x86, 0x75, 0x00, 0x3F,
++			       0x73, 0x74, 0x73, 0x74, 0x73, 0x74,
++			       0x01, 0x0C, 0x86);
++
++	/* 5.19.5 SETVCOM: Set VCOM voltage (B6h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETVCOM,
++			       0x6e, 0x6e);
++
++	/* 5.19.19 SETGIP0: Set GIP Option0 (D3h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETGIP0,
++			       0x00, 0x00, 0x07, 0x07, 0x40, 0x07,
++			       0x0c, 0x00, 0x08, 0x10, 0x08, 0x00,
++			       0x08, 0x54, 0x15, 0x0a, 0x05, 0x0a,
++			       0x02, 0x15, 0x06, 0x05, 0x06, 0x47,
++			       0x44, 0x0a, 0x0a, 0x4b, 0x10, 0x07,
++			       0x07, 0x0c, 0x40);
++
++	/* 5.19.20 Set GIP Option1 (D5h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETGIP1,
++			       0x1C, 0x1C, 0x1D, 0x1D, 0x00, 0x01,
++			       0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
++			       0x08, 0x09, 0x0A, 0x0B, 0x24, 0x25,
++			       0x18, 0x18, 0x26, 0x27, 0x18, 0x18,
++			       0x18, 0x18, 0x18, 0x18, 0x18, 0x18,
++			       0x18, 0x18, 0x18, 0x18, 0x18, 0x18,
++			       0x18, 0x18, 0x20, 0x21, 0x18, 0x18,
++			       0x18, 0x18);
++
++	/* 5.19.21 Set GIP Option2 (D6h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETGIP2,
++			       0x1C, 0x1C, 0x1D, 0x1D, 0x07, 0x06,
++			       0x05, 0x04, 0x03, 0x02, 0x01, 0x00,
++			       0x0B, 0x0A, 0x09, 0x08, 0x21, 0x20,
++			       0x18, 0x18, 0x27, 0x26, 0x18, 0x18,
++			       0x18, 0x18, 0x18, 0x18, 0x18, 0x18,
++			       0x18, 0x18, 0x18, 0x18, 0x18, 0x18,
++			       0x18, 0x18, 0x25, 0x24, 0x18, 0x18,
++			       0x18, 0x18);
++
++	/* 5.19.25 SETGAMMA: Set gamma curve related setting (E0h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETGAMMA,
++			       0x00, 0x0A, 0x15, 0x1B, 0x1E, 0x21,
++			       0x24, 0x22, 0x47, 0x56, 0x65, 0x66,
++			       0x6E, 0x82, 0x88, 0x8B, 0x9A, 0x9D,
++			       0x98, 0xA8, 0xB9, 0x5D, 0x5C, 0x61,
++			       0x66, 0x6A, 0x6F, 0x7F, 0x7F, 0x00,
++			       0x0A, 0x15, 0x1B, 0x1E, 0x21, 0x24,
++			       0x22, 0x47, 0x56, 0x65, 0x65, 0x6E,
++			       0x81, 0x87, 0x8B, 0x98, 0x9D, 0x99,
++			       0xA8, 0xBA, 0x5D, 0x5D, 0x62, 0x67,
++			       0x6B, 0x72, 0x7F, 0x7F);
++
++	/* Unknown command, not listed in the HX8394-F datasheet (C0H) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_UNKNOWN1,
++			       0x1f, 0x73);
++
++	/* Set CABC control (C9h)*/
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETCABC,
++			       0x76, 0x00, 0x30);
++
++	/* 5.19.17 SETPANEL (CCh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETPANEL,
++			       0x0b);
++
++	/* Unknown command, not listed in the HX8394-F datasheet (D4h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_UNKNOWN3,
++			       0x02);
++
++	/* 5.19.11 Set register bank (BDh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETREGBANK,
++			       0x02);
++
++	/* 5.19.11 Set register bank (D8h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETGIP3,
++			       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
++			       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF);
++
++	/* 5.19.11 Set register bank (BDh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETREGBANK,
++			       0x00);
++
++	/* 5.19.11 Set register bank (BDh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETREGBANK,
++			       0x01);
++
++	/* 5.19.2 SETPOWER: Set power (B1h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETPOWER,
++			       0x00);
++
++	/* 5.19.11 Set register bank (BDh) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_SETREGBANK,
++			       0x00);
++
++	/* Unknown command, not listed in the HX8394-F datasheet (C6h) */
++	mipi_dsi_dcs_write_seq(dsi, HX8394_CMD_UNKNOWN2,
++			       0xed);
++
++	return 0;
++}
++
++static const struct drm_display_mode mchp_ac40t08a_mode = {
++	.hdisplay    = 720,
++	.hsync_start = 720 + 12,
++	.hsync_end   = 720 + 12 + 24,
++	.htotal	     = 720 + 12 + 12 + 24,
++	.vdisplay    = 1280,
++	.vsync_start = 1280 + 13,
++	.vsync_end   = 1280 + 14,
++	.vtotal	     = 1280 + 14 + 13,
++	.clock	     = 60226,
++	.flags	     = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
++	.width_mm    = 76,
++	.height_mm   = 132,
++};
++
++static const struct hx8394_panel_desc mchp_ac40t08a_desc = {
++	.mode = &mchp_ac40t08a_mode,
++	.lanes = 4,
++	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST,
++	.format = MIPI_DSI_FMT_RGB888,
++	.init_sequence = mchp_ac40t08a_init_sequence,
++};
++
+ static int hx8394_enable(struct drm_panel *panel)
+ {
+ 	struct hx8394 *ctx = panel_to_hx8394(panel);
+@@ -352,7 +503,7 @@
+ 	if (!ctx)
+ 		return -ENOMEM;
+ 
+-	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	ctx->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+ 	if (IS_ERR(ctx->reset_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+ 				     "Failed to get reset gpio\n");
+@@ -430,6 +581,7 @@
+ 
+ static const struct of_device_id hx8394_of_match[] = {
+ 	{ .compatible = "hannstar,hsd060bhw4", .data = &hsd060bhw4_desc },
++	{ .compatible = "microchip,ac40t08a-mipi-panel", .data = &mchp_ac40t08a_desc },
+ 	{ /* sentinel */ }
+ };
+ MODULE_DEVICE_TABLE(of, hx8394_of_match);
+--- linux-6.6.51/drivers/gpu/drm/panel/panel-simple.c	2024-12-05 13:07:44.912602500 +0900
++++ linux4microchip-fpga-2024.09/drivers/gpu/drm/panel/panel-simple.c	2024-12-04 16:41:25.547616100 +0900
+@@ -4087,6 +4087,31 @@
+ 	.connector_type = DRM_MODE_CONNECTOR_LVDS,
+ };
+ 
++static const struct drm_display_mode sitronix_st7262_lvds_mode = {
++	.clock = 25000,
++	.hdisplay = 800,
++	.hsync_start = 800 + 88,
++	.hsync_end = 800 + 88 + 5,
++	.htotal = 800 + 88 + 5 + 40,
++	.vdisplay = 480,
++	.vsync_start = 480 + 23,
++	.vsync_end = 480 + 23 + 5,
++	.vtotal = 480 + 23 + 5 + 1,
++};
++
++static const struct panel_desc sitronix_st7262_lvds = {
++	.modes = &sitronix_st7262_lvds_mode,
++	.num_modes = 1,
++	.bpc = 8,
++	.size = {
++		.width = 108,
++		.height = 65,
++	},
++	.bus_flags = DRM_BUS_FLAG_DE_HIGH,
++	.bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA,
++	.connector_type = DRM_MODE_CONNECTOR_LVDS,
++};
++
+ static const struct drm_display_mode arm_rtsm_mode[] = {
+ 	{
+ 		.clock = 65000,
+@@ -4523,6 +4548,9 @@
+ 		.compatible = "yes-optoelectronics,ytc700tlag-05-201c",
+ 		.data = &yes_optoelectronics_ytc700tlag_05_201c,
+ 	}, {
++		.compatible = "sitronix,st7262",
++		.data = &sitronix_st7262_lvds,
++	}, {
+ 		/* Must be the last entry */
+ 		.compatible = "panel-dpi",
+ 		.data = &panel_dpi,
+--- linux-6.6.51/include/drm/drm_atomic_helper.h	2024-12-05 13:07:56.398873200 +0900
++++ linux4microchip-fpga-2024.09/include/drm/drm_atomic_helper.h	2024-12-04 16:41:36.792531400 +0900
+@@ -76,6 +76,9 @@
+ int drm_atomic_helper_wait_for_fences(struct drm_device *dev,
+ 					struct drm_atomic_state *state,
+ 					bool pre_swap);
++bool drm_atomic_helper_framebuffer_changed(struct drm_device *dev,
++					   struct drm_atomic_state *old_state,
++					   struct drm_crtc *crtc);
+ 
+ void drm_atomic_helper_wait_for_vblanks(struct drm_device *dev,
+ 					struct drm_atomic_state *old_state);
