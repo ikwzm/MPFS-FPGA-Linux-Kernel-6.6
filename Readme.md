@@ -18,6 +18,11 @@ This Repository provides a Linux Kernel (v6.6.x) Image and Device Trees for Micr
 * Hardware
   + MPFS-DISCO-KIT : Microchip PolarFire SoC Discovery Kit
 
-* Linux Kernel Version 6.6.x
+* Linux Kernel Version 6.6.51
 
+
+Build
+------------------------------------------------------------------------------------
+
+* [./doc/build/linux-kernel-6.6.51-mpfs-fpga.md](./doc/build/linux-kernel-6.6.51-mpfs-fpga.md)
 
