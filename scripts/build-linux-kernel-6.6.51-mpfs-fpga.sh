@@ -29,6 +29,12 @@ git checkout -b $KERNEL_RELEASE refs/tags/$KERNEL_STABLE_VERSION
 
 sh ../patches/linux-$KERNEL_VERSION/xxx_patch.sh
 
+### Patch for builddeb
+
+patch -p1 < ../patches/linux-6.6.51-mpfs-fpga-builddeb.diff
+git add --all
+git commit -m "[update] scripts/package/builddeb to add tools/include and postinst script to header package."
+
 ### Add mpfs_fpga_defconfig
 
 cp ../files/mpfs_fpga_defconfig arch/riscv/configs/

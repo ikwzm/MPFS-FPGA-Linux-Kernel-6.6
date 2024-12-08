@@ -27,6 +27,13 @@ shell$ git checkout -b linux-6.6.51-mpfs-fpga refs/tags/v6.6.51
 ```console
 shell$ sh ../patches/linux-6.6.51-mpfs-fpga/xxx_patch.sh
 ```
+### Patch for builddeb
+
+```console
+shell$ patch -p1 < ../patches/linux-6.6.51-mpfs-fpga-builddeb.diff
+shell$ git add --all
+shell$ git commit -m "[update] scripts/package/builddeb to add tools/include and postinst script to header package."
+```
 
 ### Add mpfs_fpga_defconfig
 
