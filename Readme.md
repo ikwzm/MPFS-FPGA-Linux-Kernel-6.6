@@ -15,11 +15,9 @@ This Repository provides a Linux Kernel (v6.6.x) Image and Device Trees for Micr
 
 ### Features
 
-  * Linux Kernel Version vv6.6.51
-  * Enable Device Tree Overlay with Configuration File System
-  * Enable FPGA Manager
-  * Enable FPGA Bridge
-  * Enable FPGA Reagion
+  * Linux Kernel Version v6.6.51
+  * Configuration equivalent to Microchip's linux2microchip+fpga-2024.09
+  * Device Trees  equivalent to Microchip's linux2microchip+fpga-2024.09
 
 Files
 ------------------------------------------------------------------------------------
