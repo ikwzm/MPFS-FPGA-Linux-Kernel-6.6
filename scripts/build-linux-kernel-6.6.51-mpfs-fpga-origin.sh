@@ -2,15 +2,20 @@
 
 CURRENT_DIR=`pwd`
 KERNEL_VERSION=6.6.51-mpfs-fpga
+KERNEL_LOCAL_VERSION=-origin
 KERNEL_STABLE_VERSION=v6.6.51
 BUILD_VERSION=1
-KERNEL_RELEASE=$KERNEL_VERSION
-KERNEL_RELEASE_TAG=v$KERNEL_RELEASE
+KERNEL_RELEASE=$KERNEL_VERSION$KERNEL_LOCAL_VERSION
+KERNEL_VERSION_TAG=v$KERNEL_VERSION
 LINUX_BUILD_DIR=linux-$KERNEL_RELEASE
+PATCH_SCRIPT=origin_patch.sh
+KERNEL_DEFCONFIG=mpfs_fpga_origin_defconfig
 
-echo "KERNEL_RELEASE  =" $KERNEL_RELEASE
-echo "BUILD_VERSION   =" $BUILD_VERSION
-echo "LINUX_BUILD_DIR =" $LINUX_BUILD_DIR
+echo "KERNEL_VERSION   =" $KERNEL_VERSION
+echo "KERNEL_RELEASE   =" $KERNEL_RELEASE
+echo "BUILD_VERSION    =" $BUILD_VERSION
+echo "LINUX_BUILD_DIR  =" $LINUX_BUILD_DIR
+echo "KERNEL_DEFCONFIG =" $KERNEL_DEFCONFIG
 
 ## Download Linux Kernel Source
 
@@ -27,7 +32,7 @@ git checkout -b $KERNEL_RELEASE refs/tags/$KERNEL_STABLE_VERSION
 
 ### Patch for linux-6.6.x-mpfs-fpga
 
-sh ../patches/linux-$KERNEL_VERSION/xxx_patch.sh
+sh ../patches/linux-$KERNEL_VERSION/$PATCH_SCRIPT
 
 ### Patch for builddeb
 
@@ -35,15 +40,15 @@ patch -p1 < ../patches/linux-6.6.51-mpfs-fpga-builddeb.diff
 git add --all
 git commit -m "[update] scripts/package/builddeb to add tools/include and postinst script to header package."
 
-### Add mpfs_fpga_defconfig
+### Add defconfig
 
-cp ../files/mpfs_fpga_defconfig arch/riscv/configs/
-git add arch/riscv/configs/mpfs_fpga_defconfig
-git commit -m "[add] mpfs_fpga_defconfig to arch/riscv/configs"
+cp ../files/$KERNEL_DEFCONFIG arch/riscv/configs/
+git add arch/riscv/configs/$KERNEL_DEFCONFIG
+git commit -m "[add] $KERNEL_DEFCONFIG to arch/riscv/configs"
 
 ### Create tag and .version
 
-git tag -a $KERNEL_RELEASE_TAG -m "release $KERNEL_RELEASE_TAG"
+git tag -a $KERNEL_VERSION_TAG -m "release $KERNEL_VERSION_TAG"
 echo `expr $BUILD_VERSION - 1` > .version
 
 ## Build
@@ -56,7 +61,7 @@ fi
 if [ -z $CROSS_COMPILE ]; then
     export CROSS_COMPILE=riscv64-unknown-linux-gnu-
 fi
-make mpfs_fpga_defconfig
+make $KERNEL_DEFCONFIG
 
 ### Build Linux Kernel and device tree
 
