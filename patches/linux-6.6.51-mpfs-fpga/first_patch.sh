@@ -28,7 +28,7 @@ run_patch 011_arch-riscv-configs.patch
 run_patch 012_arch-riscv-boot-dts-fabric-free.patch
 run_patch 020_arch-arm-mach-at91.patch
 run_patch 021_arch-arm-configs.patch
-run_patch 022_arch-arm-boot-dts-origin.patch
+run_patch 022_arch-arm-boot-dts.patch
 run_patch 200_drivers-auxdisplay.patch
 run_patch 201_drivers-base.patch
 run_patch 202_drivers-cache.patch
