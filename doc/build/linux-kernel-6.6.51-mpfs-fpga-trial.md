@@ -47,7 +47,7 @@ shell$ git commit -m "[add] mpfs_fpga_trial_defconfig to arch/riscv/configs"
 
 ```console
 shell$ git tag -a v6.6.51-mpfs-fpga -m "release v6.6.51-mpfs-fpga-trial"
-shell$ echo 0 > .version
+shell$ echo 1 > .version
 ```
 
 ### Build
@@ -73,15 +73,15 @@ shell$ make deb-pkg
 #### Install kernel image to this repository
 
 ```console
-shell$ cp arch/riscv/boot/Image.gz ../vmlinuz-6.6.51-mpfs-fpga-trial-1
+shell$ cp arch/riscv/boot/Image.gz ../vmlinuz-6.6.51-mpfs-fpga-trial-2
 shell$ install -d                  ../files
-shell$ cp .config                  ../files/config-6.6.51-mpfs-fpga-trial-1
+shell$ cp .config                  ../files/config-6.6.51-mpfs-fpga-trial-2
 ```
 
 #### Install devicetree to this repository
 
 ```console
-shell$ install -d                         ../devicetrees/6.6.51-mpfs-fpga-trial-1
-shell$ cp arch/riscv/boot/dts/microchip/* ../devicetrees/6.6.51-mpfs-fpga-trial-1
+shell$ install -d                         ../devicetrees/6.6.51-mpfs-fpga-trial-2
+shell$ cp arch/riscv/boot/dts/microchip/* ../devicetrees/6.6.51-mpfs-fpga-trial-2
 ```
 
