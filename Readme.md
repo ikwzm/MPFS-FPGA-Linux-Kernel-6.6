@@ -36,5 +36,5 @@ Files
 Build
 ------------------------------------------------------------------------------------
 
-* [./doc/build/linux-6.6.51-mpfs-fpga-first.md](./doc/build/linux-6.6.51-mpfs-fpga-first.md)
+* [./doc/build/linux-kernel-6.6.51-mpfs-fpga-first.md](./doc/build/linux-kernel-6.6.51-mpfs-fpga-first.md)
 
